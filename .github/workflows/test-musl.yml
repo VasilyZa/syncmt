@@ -77,12 +77,10 @@ jobs:
       
       - name: Test compile with musl-gcc
         run: |
-          echo "=== Testing with musl-gcc ==="
-          musl-gcc -static -O2 -std=c++20 -I/usr/include/c++/13 -I/usr/include/x86_64-linux-gnu/c++/13 -I/usr/include/c++/13/backward test_musl.cpp -o test_musl_gcc
-          ls -lh test_musl_gcc
-          file test_musl_gcc
-          echo "=== Running test_musl_gcc ==="
-          ./test_musl_gcc
+          echo "=== Skipping musl-gcc test (musl-gcc is for C, not C++) ==="
+          echo "musl-gcc is primarily designed for C code compilation."
+          echo "For C++ code, we use Clang 22 with musl target."
+          echo "This is the recommended approach for static C++ binaries with musl."
       
       - name: Test compile with Clang 22 (musl target)
         run: |
@@ -97,9 +95,6 @@ jobs:
       
       - name: Check binary dependencies
         run: |
-          echo "=== Checking test_musl_gcc dependencies ==="
-          ldd test_musl_gcc 2>&1 || echo "Static linked (no dependencies)"
-          
           echo "=== Checking test_clang_musl dependencies ==="
           ldd test_clang_musl 2>&1 || echo "Static linked (no dependencies)"
       
