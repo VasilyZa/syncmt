@@ -68,35 +68,24 @@ jobs:
           ls -lh syncmt-${VERSION}
           file syncmt-${VERSION}
       
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
+      - name: Create Release and Upload Asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v${{ inputs.version }}-${{ steps.commit.outputs.hash }}
-          release_name: Release v${{ inputs.version }}-${{ steps.commit.outputs.hash }}
-          body: |
-            ## Release v${{ inputs.version }}-${{ steps.commit.outputs.hash }}
-            
-            ### Build Information
-            - **Version**: ${{ inputs.version }}
-            - **Commit**: ${{ steps.commit.outputs.hash }}
-            - **Compiler**: Clang with musl-static
-            - **Platform**: Linux x86_64
-            - **Build Date**: ${{ github.event.head_commit.timestamp }}
-            
-            ### Binary
-            - `syncmt-${{ inputs.version }}-${{ steps.commit.outputs.hash }}`: Static linked binary for Linux x86_64
-          draft: false
-          prerelease: false
-      
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./syncmt-${{ inputs.version }}-${{ steps.commit.outputs.hash }}
-          asset_name: syncmt-${{ inputs.version }}-${{ steps.commit.outputs.hash }}
-          asset_content_type: application/octet-stream
+        run: |
+          VERSION="${{ inputs.version }}-${{ steps.commit.outputs.hash }}"
+          echo "=== Creating Release v${VERSION} ==="
+          
+          gh release create v${VERSION} \
+            --title "Release v${VERSION}" \
+            --notes "## Release v${VERSION}
+
+          ### Build Information
+          - **Version**: ${{ inputs.version }}
+          - **Commit**: ${{ steps.commit.outputs.hash }}
+          - **Compiler**: Clang 22 with musl-static
+          - **Platform**: Linux x86_64
+          - **Build Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+          ### Binary
+          - \`syncmt-${VERSION}\`: Static linked binary for Linux x86_64" \
+            ./syncmt-${VERSION}
