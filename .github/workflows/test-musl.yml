@@ -40,12 +40,14 @@ jobs:
           tar xf Clang-22.0.0git-20250928.tar.gz
           echo "=== Directory Structure ==="
           ls -la
+          echo "=== Bin directory contents ==="
+          ls -la bin/
           echo "=== Finding clang++ binary ==="
           find . -name "clang++" -type f
           echo "=== Clang Directory Structure ==="
           find . -type d -name "include" | head -20
           echo "CLANG_DIR=$(pwd)" >> $GITHUB_ENV
-          echo "$(pwd)" >> $GITHUB_PATH
+          echo "$(pwd)/bin" >> $GITHUB_PATH
           echo "=== PATH ==="
           echo $PATH
           echo "=== Clang Version ==="
