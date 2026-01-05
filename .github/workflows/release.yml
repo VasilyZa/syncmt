@@ -25,12 +25,14 @@ jobs:
       
       - name: Download and install Clang 22
         run: |
+          mkdir clang
+          cd clang
           wget https://github.com/ZyCromerZ/Clang/releases/download/22.0.0git-20250928-release/Clang-22.0.0git-20250928.tar.gz
-          tar -xzf Clang-22.0.0git-20250928.tar.gz
-          echo "CLANG_DIR=$(pwd)/Clang-22.0.0git-20250928" >> $GITHUB_ENV
-          echo "${{ github.workspace }}/Clang-22.0.0git-20250928/bin" >> $GITHUB_PATH
+          tar xvf Clang-22.0.0git-20250928.tar.gz
+          echo "CLANG_DIR=$(pwd)" >> $GITHUB_ENV
+          echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
           echo "Clang 22 installed successfully"
-          ls -la Clang-22.0.0git-20250928/bin/
+          ls -la ${{ env.CLANG_DIR }}/bin
       
       - name: Get commit hash
         id: commit
