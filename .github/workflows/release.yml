@@ -32,6 +32,8 @@ jobs:
           tar xf Clang-22.0.0git-20250928.tar.gz
           echo "CLANG_DIR=$(pwd)" >> $GITHUB_ENV
           echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
+          echo "=== Clang Directory Structure ==="
+          find . -type d -name "include" | head -20
           echo "Clang 22 installed successfully"
       
       - name: Get commit hash
@@ -48,7 +50,7 @@ jobs:
           echo "=== Compiler Info ==="
           ${CLANG_DIR}/bin/clang++ --version
           echo "=== Building ==="
-          ${CLANG_DIR}/bin/clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl -nostdinc -nostdinc++ -isystem /usr/include/x86_64-linux-musl -isystem /usr/include/c++/v1 main.cpp -o syncmt-${VERSION} -lc -lm -lpthread -ldl
+          ${CLANG_DIR}/bin/clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl main.cpp -o syncmt-${VERSION}
           ls -lh syncmt-${VERSION}
           file syncmt-${VERSION}
       

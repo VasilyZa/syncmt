@@ -1,0 +1,97 @@
+name: Test Musl Environment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-musl:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-dev musl-tools
+          echo "=== Musl Installation ==="
+          which musl-gcc
+          musl-gcc --version
+          echo "=== Musl Headers ==="
+          ls -la /usr/include/x86_64-linux-musl/ | head -20
+      
+      - name: Download and install Clang 22
+        run: |
+          sudo apt-get install -y aria2
+          mkdir -p clang
+          cd clang
+          aria2c -s16 -x16 --log-level=error https://github.com/ZyCromerZ/Clang/releases/download/22.0.0git-20250928-release/Clang-22.0.0git-20250928.tar.gz
+          tar xf Clang-22.0.0git-20250928.tar.gz
+          echo "CLANG_DIR=$(pwd)" >> $GITHUB_ENV
+          echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
+          echo "=== Clang Directory Structure ==="
+          find . -type d -name "include" | head -20
+          echo "=== Clang Version ==="
+          ${CLANG_DIR}/bin/clang++ --version
+      
+      - name: Create test program
+        run: |
+          cat > test_musl.cpp << 'EOF'
+          #include <iostream>
+          #include <vector>
+          #include <string>
+          
+          int main() {
+              std::vector<int> vec = {1, 2, 3, 4, 5};
+              std::string str = "Hello from musl!";
+              
+              std::cout << "=== Musl Test ===" << std::endl;
+              std::cout << "Vector size: " << vec.size() << std::endl;
+              std::cout << "String: " << str << std::endl;
+              std::cout << "Test passed!" << std::endl;
+              
+              return 0;
+          }
+          EOF
+          echo "=== Test Program Created ==="
+          cat test_musl.cpp
+      
+      - name: Test compile with musl-gcc
+        run: |
+          echo "=== Testing with musl-gcc ==="
+          musl-g++ -static -O2 -std=c++20 test_musl.cpp -o test_musl_gcc
+          ls -lh test_musl_gcc
+          file test_musl_gcc
+          echo "=== Running test_musl_gcc ==="
+          ./test_musl_gcc
+      
+      - name: Test compile with Clang 22 (musl target)
+        run: |
+          echo "=== Testing with Clang 22 (musl target) ==="
+          ${CLANG_DIR}/bin/clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl test_musl.cpp -o test_clang_musl
+          ls -lh test_clang_musl
+          file test_clang_musl
+          echo "=== Running test_clang_musl ==="
+          ./test_clang_musl
+      
+      - name: Check binary dependencies
+        run: |
+          echo "=== Checking test_musl_gcc dependencies ==="
+          ldd test_musl_gcc 2>&1 || echo "Static linked (no dependencies)"
+          
+          echo "=== Checking test_clang_musl dependencies ==="
+          ldd test_clang_musl 2>&1 || echo "Static linked (no dependencies)"
+      
+      - name: Test with main.cpp
+        run: |
+          echo "=== Testing main.cpp with Clang 22 (musl target) ==="
+          ${CLANG_DIR}/bin/clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl main.cpp -o syncmt_test
+          ls -lh syncmt_test
+          file syncmt_test
+          echo "=== Checking syncmt_test dependencies ==="
+          ldd syncmt_test 2>&1 || echo "Static linked (no dependencies)"
