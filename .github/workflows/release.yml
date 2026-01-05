@@ -25,14 +25,14 @@ jobs:
       
       - name: Download and install Clang 22
         run: |
-          mkdir clang
+          sudo apt-get install -y aria2
+          mkdir -p clang
           cd clang
-          wget https://github.com/ZyCromerZ/Clang/releases/download/22.0.0git-20250928-release/Clang-22.0.0git-20250928.tar.gz
-          tar xvf Clang-22.0.0git-20250928.tar.gz
+          aria2c -s16 -x16 --log-level=error https://github.com/ZyCromerZ/Clang/releases/download/22.0.0git-20250928-release/Clang-22.0.0git-20250928.tar.gz
+          tar xf Clang-22.0.0git-20250928.tar.gz
           echo "CLANG_DIR=$(pwd)" >> $GITHUB_ENV
           echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
           echo "Clang 22 installed successfully"
-          ls -la ${{ env.CLANG_DIR }}/bin
       
       - name: Get commit hash
         id: commit
