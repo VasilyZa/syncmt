@@ -21,7 +21,7 @@ jobs:
       - name: Install musl
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-dev musl-tools
+          sudo apt-get install -y musl-dev musl-tools g++-multilib
       
       - name: Download and install Clang 22
         run: |
@@ -50,7 +50,7 @@ jobs:
           echo "=== Compiler Info ==="
           ${CLANG_DIR}/bin/clang++ --version
           echo "=== Building ==="
-          ${CLANG_DIR}/bin/clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl main.cpp -o syncmt-${VERSION}
+          ${CLANG_DIR}/bin/clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl -isystem /usr/include/x86_64-linux-musl -isystem /usr/include/c++/v1 main.cpp -o syncmt-${VERSION}
           ls -lh syncmt-${VERSION}
           file syncmt-${VERSION}
       
