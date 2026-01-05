@@ -34,10 +34,18 @@ jobs:
           cd clang
           aria2c -s16 -x16 --log-level=error https://github.com/ZyCromerZ/Clang/releases/download/22.0.0git-20250928-release/Clang-22.0.0git-20250928.tar.gz
           tar xf Clang-22.0.0git-20250928.tar.gz
-          echo "CLANG_DIR=$(pwd)" >> $GITHUB_ENV
-          echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
+          echo "=== Directory Structure ==="
+          ls -la
+          echo "=== Finding clang++ binary ==="
+          find . -name "clang++" -type f
           echo "=== Clang Directory Structure ==="
           find . -type d -name "include" | head -20
+          echo "CLANG_DIR=$(pwd)" >> $GITHUB_ENV
+          echo "$(pwd)" >> $GITHUB_PATH
+          echo "=== PATH ==="
+          echo $PATH
+          echo "=== Clang Version ==="
+          clang++ --version
           echo "Clang 22 installed successfully"
       
       - name: Get commit hash
@@ -52,9 +60,9 @@ jobs:
           VERSION="${{ inputs.version }}-${{ steps.commit.outputs.hash }}"
           echo "Building version: ${VERSION}"
           echo "=== Compiler Info ==="
-          ${CLANG_DIR}/bin/clang++ --version
+          clang++ --version
           echo "=== Building ==="
-          ${CLANG_DIR}/bin/clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl main.cpp -o syncmt-${VERSION}
+          clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl main.cpp -o syncmt-${VERSION}
           ls -lh syncmt-${VERSION}
           file syncmt-${VERSION}
       

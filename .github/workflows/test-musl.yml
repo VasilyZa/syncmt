@@ -38,12 +38,18 @@ jobs:
           cd clang
           aria2c -s16 -x16 --log-level=error https://github.com/ZyCromerZ/Clang/releases/download/22.0.0git-20250928-release/Clang-22.0.0git-20250928.tar.gz
           tar xf Clang-22.0.0git-20250928.tar.gz
-          echo "CLANG_DIR=$(pwd)" >> $GITHUB_ENV
-          echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
+          echo "=== Directory Structure ==="
+          ls -la
+          echo "=== Finding clang++ binary ==="
+          find . -name "clang++" -type f
           echo "=== Clang Directory Structure ==="
           find . -type d -name "include" | head -20
+          echo "CLANG_DIR=$(pwd)" >> $GITHUB_ENV
+          echo "$(pwd)" >> $GITHUB_PATH
+          echo "=== PATH ==="
+          echo $PATH
           echo "=== Clang Version ==="
-          ${CLANG_DIR}/bin/clang++ --version
+          clang++ --version
       
       - name: Create test program
         run: |
@@ -79,7 +85,7 @@ jobs:
       - name: Test compile with Clang 22 (musl target)
         run: |
           echo "=== Testing with Clang 22 (musl target) ==="
-          ${CLANG_DIR}/bin/clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl test_musl.cpp -o test_clang_musl
+          clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl test_musl.cpp -o test_clang_musl
           ls -lh test_clang_musl
           file test_clang_musl
           echo "=== Running test_clang_musl ==="
