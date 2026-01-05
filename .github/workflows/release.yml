@@ -45,11 +45,12 @@ jobs:
         run: |
           VERSION="${{ inputs.version }}-${{ steps.commit.outputs.hash }}"
           echo "Building version: ${VERSION}"
-          
-          ${CLANG_DIR}/bin/clang++ -static -O2 -std=c++20 \
-            -I/usr/include/x86_64-linux-musl \
-            main.cpp -o syncmt-${VERSION}
-          
+          echo "=== Compiler Info ==="
+          ${CLANG_DIR}/bin/clang++ --version
+          echo "=== Include Paths ==="
+          ${CLANG_DIR}/bin/clang++ -E -x c++ -v - < /dev/null 2>&1 | grep -A 20 "include.*search"
+          echo "=== Building ==="
+          ${CLANG_DIR}/bin/clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl -nostdlib++ -I/usr/include/x86_64-linux-musl -I/usr/include/c++/v1 main.cpp -o syncmt-${VERSION} -lc -lm -lpthread -ldl
           ls -lh syncmt-${VERSION}
           file syncmt-${VERSION}
       
