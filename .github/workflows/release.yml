@@ -1,0 +1,76 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Install LLVM and musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang++ musl-dev musl-tools
+      
+      - name: Get commit hash
+        id: commit
+        run: |
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "hash=${COMMIT_HASH}" >> $GITHUB_OUTPUT
+          echo "Commit hash: ${COMMIT_HASH}"
+      
+      - name: Build with musl-static
+        run: |
+          VERSION="${{ inputs.version }}-${{ steps.commit.outputs.hash }}"
+          echo "Building version: ${VERSION}"
+          
+          clang++ -static -O2 -std=c++20 \
+            -I/usr/include/x86_64-linux-musl \
+            main.cpp -o syncmt-${VERSION}
+          
+          ls -lh syncmt-${VERSION}
+          file syncmt-${VERSION}
+      
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ inputs.version }}-${{ steps.commit.outputs.hash }}
+          release_name: Release v${{ inputs.version }}-${{ steps.commit.outputs.hash }}
+          body: |
+            ## Release v${{ inputs.version }}-${{ steps.commit.outputs.hash }}
+            
+            ### Build Information
+            - **Version**: ${{ inputs.version }}
+            - **Commit**: ${{ steps.commit.outputs.hash }}
+            - **Compiler**: Clang with musl-static
+            - **Platform**: Linux x86_64
+            - **Build Date**: ${{ github.event.head_commit.timestamp }}
+            
+            ### Binary
+            - `syncmt-${{ inputs.version }}-${{ steps.commit.outputs.hash }}`: Static linked binary for Linux x86_64
+          draft: false
+          prerelease: false
+      
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./syncmt-${{ inputs.version }}-${{ steps.commit.outputs.hash }}
+          asset_name: syncmt-${{ inputs.version }}-${{ steps.commit.outputs.hash }}
+          asset_content_type: application/octet-stream
