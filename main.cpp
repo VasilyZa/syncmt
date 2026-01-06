@@ -19,7 +19,7 @@
 
 namespace fs = std::filesystem;
 
-constexpr char VERSION[] = "1.1.2";
+constexpr char VERSION[] = "1.1.3";
 constexpr size_t DEFAULT_THREADS = 4;
 constexpr size_t MIN_CHUNK_SIZE = 64 * 1024;
 constexpr size_t MAX_CHUNK_SIZE = 16 * 1024 * 1024;
