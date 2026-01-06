@@ -23,7 +23,7 @@ jobs:
       - name: Install musl
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-dev musl-tools g++-multilib
+          sudo apt-get install -y musl-dev musl-tools g++-multilib dpkg-dev
           echo "=== Finding C++ include path ==="
           find /usr/include -name "iostream" 2>/dev/null | head -10
           echo "=== GCC include paths ==="
@@ -87,6 +87,102 @@ jobs:
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
           echo "COMMIT=${COMMIT}" >> $GITHUB_ENV
       
+      - name: Create .deb package
+        run: |
+          VERSION="${{ env.VERSION }}"
+          PACKAGE_NAME="syncmt_${VERSION}_amd64.deb"
+          
+          echo "=== Creating .deb package ==="
+          
+          mkdir -p package/DEBIAN
+          mkdir -p package/usr/local/bin
+          mkdir -p package/usr/share/doc/syncmt
+          
+          cat > package/DEBIAN/control << 'EOF'
+Package: syncmt
+Version: ${VERSION}
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: syncmt contributors
+Installed-Size: 1024
+Homepage: https://github.com/yourusername/syncmt
+Description: High-performance multi-threaded file copy utility
+ syncmt is a high-performance, multi-threaded file copy and move utility
+ for Linux x86_64. It features:
+  - Zero-copy file transfer using sendfile system call
+  - Native Linux system calls for directory scanning
+  - Pipeline processing for parallel scanning and copying
+  - Batch task submission for improved throughput
+  - File space pre-allocation with fallocate
+  - Adaptive chunk size optimization
+  - Directory caching to avoid redundant checks
+EOF
+          
+          cat > package/DEBIAN/postinst << 'EOF'
+#!/bin/bash
+set -e
+
+echo "syncmt has been installed successfully!"
+echo "Usage: syncmt [OPTIONS] <source>... <destination>"
+echo "Run 'syncmt -h' for more information."
+EOF
+          chmod 755 package/DEBIAN/postinst
+          
+          cp ${{ env.BINARY_NAME }} package/usr/local/bin/syncmt
+          chmod 755 package/usr/local/bin/syncmt
+          
+          cat > package/usr/share/doc/syncmt/README << 'EOF'
+syncmt - High-Performance Multi-Threaded File Copy Utility
+
+INSTALLATION
+------------
+The binary has been installed to /usr/local/bin/syncmt
+
+USAGE
+-----
+Basic usage:
+  syncmt /path/to/source /path/to/destination
+
+Options:
+  -t, --threads <num>   Number of threads (default: 4)
+  -m, --move            Move files instead of copying
+  -v, --verbose         Enable verbose output
+  -o, --overwrite       Overwrite existing files
+  -s, --skip            Skip existing files
+  -h, --help            Show help message
+  -V, --version         Print version information
+
+EXAMPLES
+--------
+Copy a directory:
+  syncmt /home/user/documents /backup
+
+Copy with 8 threads:
+  syncmt -t 8 /source /destination
+
+Move files:
+  syncmt -m /source /destination
+
+PERFORMANCE OPTIMIZATIONS
+------------------------
+- Zero-copy file transfer using sendfile
+- Native Linux system calls (opendir/readdir)
+- Pipeline processing for parallel operations
+- Batch task submission
+- File space pre-allocation
+- Adaptive chunk size
+- Directory caching
+
+For more information, visit the project repository.
+EOF
+          
+          dpkg-deb --build package ${PACKAGE_NAME}
+          ls -lh ${PACKAGE_NAME}
+          file ${PACKAGE_NAME}
+          
+          echo "DEB_PACKAGE=${PACKAGE_NAME}" >> $GITHUB_ENV
+      
       - name: Create Release and Upload Asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -104,6 +200,20 @@ jobs:
           - **Platform**: Linux x86_64
           - **Build Date**: $(TZ='Asia/Shanghai' date +"%Y-%m-%d %H:%M:%S UTC+8")
 
-          ### Binary
-          - \`${{ env.BINARY_NAME }}\`: Static linked binary for Linux x86_64" \
-            ./${{ env.BINARY_NAME }}
+          ### Binaries
+          - \`${{ env.BINARY_NAME }}\`: Static linked binary for Linux x86_64
+          - \`${{ env.DEB_PACKAGE }}\`: Debian package (.deb) for easy installation
+
+          ### Installation
+          **Using .deb package (recommended):**
+          \`\`\`bash
+          sudo dpkg -i ${{ env.DEB_PACKAGE }}
+          \`\`\`
+
+          **Using static binary:**
+          \`\`\`bash
+          chmod +x ${{ env.BINARY_NAME }}
+          sudo mv ${{ env.BINARY_NAME }} /usr/local/bin/syncmt
+          \`\`\`" \
+            ./${{ env.BINARY_NAME }} \
+            ./${{ env.DEB_PACKAGE }}
