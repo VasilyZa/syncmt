@@ -98,84 +98,78 @@ jobs:
           mkdir -p package/usr/local/bin
           mkdir -p package/usr/share/doc/syncmt
           
-          cat > package/DEBIAN/control << EOF
-Package: syncmt
-Version: ${VERSION}
-Section: utils
-Priority: optional
-Architecture: amd64
-Maintainer: syncmt contributors
-Installed-Size: 1024
-Homepage: https://github.com/yourusername/syncmt
-Description: High-performance multi-threaded file copy utility
- syncmt is a high-performance, multi-threaded file copy and move utility
- for Linux x86_64. It features:
-  - Zero-copy file transfer using sendfile system call
-  - Native Linux system calls for directory scanning
-  - Pipeline processing for parallel scanning and copying
-  - Batch task submission for improved throughput
-  - File space pre-allocation with fallocate
-  - Adaptive chunk size optimization
-  - Directory caching to avoid redundant checks
-EOF
+          echo "Package: syncmt" > package/DEBIAN/control
+          echo "Version: ${VERSION}" >> package/DEBIAN/control
+          echo "Section: utils" >> package/DEBIAN/control
+          echo "Priority: optional" >> package/DEBIAN/control
+          echo "Architecture: amd64" >> package/DEBIAN/control
+          echo "Maintainer: syncmt contributors" >> package/DEBIAN/control
+          echo "Installed-Size: 1024" >> package/DEBIAN/control
+          echo "Homepage: https://github.com/yourusername/syncmt" >> package/DEBIAN/control
+          echo "Description: High-performance multi-threaded file copy utility" >> package/DEBIAN/control
+          echo " syncmt is a high-performance, multi-threaded file copy and move" >> package/DEBIAN/control
+          echo " utility for Linux x86_64. It features:" >> package/DEBIAN/control
+          echo "  - Zero-copy file transfer using sendfile system call" >> package/DEBIAN/control
+          echo "  - Native Linux system calls for directory scanning" >> package/DEBIAN/control
+          echo "  - Pipeline processing for parallel scanning and copying" >> package/DEBIAN/control
+          echo "  - Batch task submission for improved throughput" >> package/DEBIAN/control
+          echo "  - File space pre-allocation with fallocate" >> package/DEBIAN/control
+          echo "  - Adaptive chunk size optimization" >> package/DEBIAN/control
+          echo "  - Directory caching to avoid redundant checks" >> package/DEBIAN/control
           
-          cat > package/DEBIAN/postinst << EOF
-#!/bin/bash
-set -e
-
-echo "syncmt has been installed successfully!"
-echo "Usage: syncmt [OPTIONS] <source>... <destination>"
-echo "Run 'syncmt -h' for more information."
-EOF
+          echo "#!/bin/bash" > package/DEBIAN/postinst
+          echo "set -e" >> package/DEBIAN/postinst
+          echo "" >> package/DEBIAN/postinst
+          echo "echo \"syncmt has been installed successfully!\"" >> package/DEBIAN/postinst
+          echo "echo \"Usage: syncmt [OPTIONS] <source>... <destination>\"" >> package/DEBIAN/postinst
+          echo "echo \"Run 'syncmt -h' for more information.\"" >> package/DEBIAN/postinst
           chmod 755 package/DEBIAN/postinst
           
           cp ${{ env.BINARY_NAME }} package/usr/local/bin/syncmt
           chmod 755 package/usr/local/bin/syncmt
           
-          cat > package/usr/share/doc/syncmt/README << EOF
-syncmt - High-Performance Multi-Threaded File Copy Utility
-
-INSTALLATION
-------------
-The binary has been installed to /usr/local/bin/syncmt
-
-USAGE
------
-Basic usage:
-  syncmt /path/to/source /path/to/destination
-
-Options:
-  -t, --threads <num>   Number of threads (default: 4)
-  -m, --move            Move files instead of copying
-  -v, --verbose         Enable verbose output
-  -o, --overwrite       Overwrite existing files
-  -s, --skip            Skip existing files
-  -h, --help            Show help message
-  -V, --version         Print version information
-
-EXAMPLES
---------
-Copy a directory:
-  syncmt /home/user/documents /backup
-
-Copy with 8 threads:
-  syncmt -t 8 /source /destination
-
-Move files:
-  syncmt -m /source /destination
-
-PERFORMANCE OPTIMIZATIONS
-------------------------
-- Zero-copy file transfer using sendfile
-- Native Linux system calls (opendir/readdir)
-- Pipeline processing for parallel operations
-- Batch task submission
-- File space pre-allocation
-- Adaptive chunk size
-- Directory caching
-
-For more information, visit the project repository.
-EOF
+          echo "syncmt - High-Performance Multi-Threaded File Copy Utility" > package/usr/share/doc/syncmt/README
+          echo "" >> package/usr/share/doc/syncmt/README
+          echo "INSTALLATION" >> package/usr/share/doc/syncmt/README
+          echo "------------" >> package/usr/share/doc/syncmt/README
+          echo "The binary has been installed to /usr/local/bin/syncmt" >> package/usr/share/doc/syncmt/README
+          echo "" >> package/usr/share/doc/syncmt/README
+          echo "USAGE" >> package/usr/share/doc/syncmt/README
+          echo "-----" >> package/usr/share/doc/syncmt/README
+          echo "Basic usage:" >> package/usr/share/doc/syncmt/README
+          echo "  syncmt /path/to/source /path/to/destination" >> package/usr/share/doc/syncmt/README
+          echo "" >> package/usr/share/doc/syncmt/README
+          echo "Options:" >> package/usr/share/doc/syncmt/README
+          echo "  -t, --threads <num>   Number of threads (default: 4)" >> package/usr/share/doc/syncmt/README
+          echo "  -m, --move            Move files instead of copying" >> package/usr/share/doc/syncmt/README
+          echo "  -v, --verbose         Enable verbose output" >> package/usr/share/doc/syncmt/README
+          echo "  -o, --overwrite       Overwrite existing files" >> package/usr/share/doc/syncmt/README
+          echo "  -s, --skip            Skip existing files" >> package/usr/share/doc/syncmt/README
+          echo "  -h, --help            Show help message" >> package/usr/share/doc/syncmt/README
+          echo "  -V, --version         Print version information" >> package/usr/share/doc/syncmt/README
+          echo "" >> package/usr/share/doc/syncmt/README
+          echo "EXAMPLES" >> package/usr/share/doc/syncmt/README
+          echo "--------" >> package/usr/share/doc/syncmt/README
+          echo "Copy a directory:" >> package/usr/share/doc/syncmt/README
+          echo "  syncmt /home/user/documents /backup" >> package/usr/share/doc/syncmt/README
+          echo "" >> package/usr/share/doc/syncmt/README
+          echo "Copy with 8 threads:" >> package/usr/share/doc/syncmt/README
+          echo "  syncmt -t 8 /source /destination" >> package/usr/share/doc/syncmt/README
+          echo "" >> package/usr/share/doc/syncmt/README
+          echo "Move files:" >> package/usr/share/doc/syncmt/README
+          echo "  syncmt -m /source /destination" >> package/usr/share/doc/syncmt/README
+          echo "" >> package/usr/share/doc/syncmt/README
+          echo "PERFORMANCE OPTIMIZATIONS" >> package/usr/share/doc/syncmt/README
+          echo "------------------------" >> package/usr/share/doc/syncmt/README
+          echo "- Zero-copy file transfer using sendfile" >> package/usr/share/doc/syncmt/README
+          echo "- Native Linux system calls (opendir/readdir)" >> package/usr/share/doc/syncmt/README
+          echo "- Pipeline processing for parallel operations" >> package/usr/share/doc/syncmt/README
+          echo "- Batch task submission" >> package/usr/share/doc/syncmt/README
+          echo "- File space pre-allocation" >> package/usr/share/doc/syncmt/README
+          echo "- Adaptive chunk size" >> package/usr/share/doc/syncmt/README
+          echo "- Directory caching" >> package/usr/share/doc/syncmt/README
+          echo "" >> package/usr/share/doc/syncmt/README
+          echo "For more information, visit the project repository." >> package/usr/share/doc/syncmt/README
           
           dpkg-deb --build package ${PACKAGE_NAME}
           ls -lh ${PACKAGE_NAME}
@@ -187,32 +181,30 @@ EOF
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cat > release_notes.txt << 'EOF'
-          ## Release v${{ env.VERSION }}
-
-          ### Build Information
-          - **Version**: ${{ env.VERSION }}
-          - **Commit**: ${{ env.COMMIT }}
-          - **Compiler**: Clang 22 with musl-static
-          - **Platform**: Linux x86_64
-          - **Build Date**: $(TZ='Asia/Shanghai' date +"%Y-%m-%d %H:%M:%S UTC+8")
-
-          ### Binaries
-          - `${{ env.BINARY_NAME }}`: Static linked binary for Linux x86_64
-          - `${{ env.DEB_PACKAGE }}`: Debian package (.deb) for easy installation
-
-          ### Installation
-          **Using .deb package (recommended):**
-          \`\`\`bash
-          sudo dpkg -i ${{ env.DEB_PACKAGE }}
-          \`\`\`
-
-          **Using static binary:**
-          \`\`\`bash
-          chmod +x ${{ env.BINARY_NAME }}
-          sudo mv ${{ env.BINARY_NAME }} /usr/local/bin/syncmt
-          \`\`\`
-          EOF
+          echo "## Release v${{ env.VERSION }}" > release_notes.txt
+          echo "" >> release_notes.txt
+          echo "### Build Information" >> release_notes.txt
+          echo "- **Version**: ${{ env.VERSION }}" >> release_notes.txt
+          echo "- **Commit**: ${{ env.COMMIT }}" >> release_notes.txt
+          echo "- **Compiler**: Clang 22 with musl-static" >> release_notes.txt
+          echo "- **Platform**: Linux x86_64" >> release_notes.txt
+          echo "- **Build Date**: $(TZ='Asia/Shanghai' date +\"%Y-%m-%d %H:%M:%S UTC+8\")" >> release_notes.txt
+          echo "" >> release_notes.txt
+          echo "### Binaries" >> release_notes.txt
+          echo "- \`${{ env.BINARY_NAME }}\`: Static linked binary for Linux x86_64" >> release_notes.txt
+          echo "- \`${{ env.DEB_PACKAGE }}\`: Debian package (.deb) for easy installation" >> release_notes.txt
+          echo "" >> release_notes.txt
+          echo "### Installation" >> release_notes.txt
+          echo "**Using .deb package (recommended):**" >> release_notes.txt
+          echo "\`\`\`bash" >> release_notes.txt
+          echo "sudo dpkg -i ${{ env.DEB_PACKAGE }}" >> release_notes.txt
+          echo "\`\`\`" >> release_notes.txt
+          echo "" >> release_notes.txt
+          echo "**Using static binary:**" >> release_notes.txt
+          echo "\`\`\`bash" >> release_notes.txt
+          echo "chmod +x ${{ env.BINARY_NAME }}" >> release_notes.txt
+          echo "sudo mv ${{ env.BINARY_NAME }} /usr/local/bin/syncmt" >> release_notes.txt
+          echo "\`\`\`" >> release_notes.txt
           
           echo "=== Creating Release v${{ env.VERSION }} ==="
           gh release create v${{ env.VERSION }} \
