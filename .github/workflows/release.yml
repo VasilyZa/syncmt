@@ -98,7 +98,7 @@ jobs:
           mkdir -p package/usr/local/bin
           mkdir -p package/usr/share/doc/syncmt
           
-          cat > package/DEBIAN/control << 'EOF'
+          cat > package/DEBIAN/control << EOF
 Package: syncmt
 Version: ${VERSION}
 Section: utils
@@ -119,7 +119,7 @@ Description: High-performance multi-threaded file copy utility
   - Directory caching to avoid redundant checks
 EOF
           
-          cat > package/DEBIAN/postinst << 'EOF'
+          cat > package/DEBIAN/postinst << EOF
 #!/bin/bash
 set -e
 
@@ -132,7 +132,7 @@ EOF
           cp ${{ env.BINARY_NAME }} package/usr/local/bin/syncmt
           chmod 755 package/usr/local/bin/syncmt
           
-          cat > package/usr/share/doc/syncmt/README << 'EOF'
+          cat > package/usr/share/doc/syncmt/README << EOF
 syncmt - High-Performance Multi-Threaded File Copy Utility
 
 INSTALLATION
