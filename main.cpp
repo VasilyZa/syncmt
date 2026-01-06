@@ -19,7 +19,18 @@
 
 namespace fs = std::filesystem;
 
-constexpr char VERSION[] = "1.1.3";
+#ifndef VERSION
+#define VERSION "1.1.3"
+#endif
+
+#ifndef GIT_COMMIT
+#define GIT_COMMIT "unknown"
+#endif
+
+#ifndef BUILD_DATE
+#define BUILD_DATE __DATE__
+#endif
+
 constexpr size_t DEFAULT_THREADS = 4;
 constexpr size_t MIN_CHUNK_SIZE = 64 * 1024;
 constexpr size_t MAX_CHUNK_SIZE = 16 * 1024 * 1024;
@@ -401,6 +412,9 @@ private:
         double seconds = total_elapsed.count() / 1000.0;
         double speed = copied / (1024.0 * 1024.0) / seconds;
 
+        double remaining_bytes = total_b - copied;
+        double eta = speed > 0 ? remaining_bytes / (1024.0 * 1024.0) / speed : 0;
+
         int bar_width = 40;
         int filled = static_cast<int>(file_progress * bar_width / 100.0);
 
@@ -419,12 +433,38 @@ private:
         std::cout << "(" << processed << "/" << total << " files, ";
         std::cout << std::setprecision(2) << (copied / (1024.0 * 1024.0)) << "/";
         std::cout << std::setprecision(2) << (total_b / (1024.0 * 1024.0)) << " MB, ";
-        std::cout << std::setprecision(1) << speed << " MB/s)";
+        std::cout << std::setprecision(1) << speed << " MB/s, ETA: ";
+        
+        if (eta < 60) {
+            std::cout << std::setprecision(0) << eta << "s";
+        } else if (eta < 3600) {
+            std::cout << std::setprecision(0) << (eta / 60) << "m" 
+                      << std::setprecision(0) << (static_cast<int>(eta) % 60) << "s";
+        } else {
+            int hours = static_cast<int>(eta) / 3600;
+            int minutes = (static_cast<int>(eta) % 3600) / 60;
+            std::cout << hours << "h" << minutes << "m";
+        }
+        
+        std::cout << ")";
+        std::cout.flush();
+    }
+
+    void update_scan_progress(size_t scanned_files, uint64_t scanned_bytes) {
+        std::cout << "\rScanning: [" << scanned_files << " files, " 
+                  << std::fixed << std::setprecision(2) 
+                  << (scanned_bytes / (1024.0 * 1024.0)) << " MB]... ";
         std::cout.flush();
     }
 
     void process_directory(const fs::path& src_dir, const fs::path& dst_dir) {
+        std::cout << "Scanning directory: " << src_dir << "..." << std::endl;
+        std::cout.flush();
+
         std::vector<FileTask> tasks;
+        size_t scan_counter = 0;
+        constexpr size_t SCAN_UPDATE_INTERVAL = 1000;
+        auto scan_start_time = std::chrono::high_resolution_clock::now();
 
         for (const auto& entry : fs::recursive_directory_iterator(src_dir)) {
             if (entry.is_regular_file()) {
@@ -435,8 +475,24 @@ private:
                 total_bytes += entry.file_size();
 
                 tasks.push_back({entry.path(), dst_path, move_mode, conflict_resolution});
+
+                scan_counter++;
+                if (scan_counter % SCAN_UPDATE_INTERVAL == 0) {
+                    update_scan_progress(total_files.load(), total_bytes.load());
+                }
             }
         }
+
+        auto scan_end_time = std::chrono::high_resolution_clock::now();
+        auto scan_duration = std::chrono::duration_cast<std::chrono::milliseconds>(scan_end_time - scan_start_time);
+        double scan_seconds = scan_duration.count() / 1000.0;
+
+        std::cout << "\rScanning: [" << total_files.load() << " files, " 
+                  << std::fixed << std::setprecision(2) 
+                  << (total_bytes.load() / (1024.0 * 1024.0)) << " MB] Done! ("
+                  << std::setprecision(2) << scan_seconds << "s)" << std::endl;
+        std::cout << "Starting copy operation..." << std::endl;
+        std::cout.flush();
 
         tasks.reserve(tasks.size());
 
@@ -490,6 +546,8 @@ void print_usage(const char* program_name) {
 
 void print_version() {
     std::cout << "syncmt version " << VERSION << std::endl;
+    std::cout << "Git commit: " << GIT_COMMIT << std::endl;
+    std::cout << "Build date: " << BUILD_DATE << std::endl;
 }
 
 int main(int argc, char* argv[]) {

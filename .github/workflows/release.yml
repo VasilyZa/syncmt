@@ -61,33 +61,49 @@ jobs:
       
       - name: Build with musl-static
         run: |
-          VERSION="${{ inputs.version }}-${{ steps.commit.outputs.hash }}"
+          VERSION="${{ inputs.version }}"
+          COMMIT="${{ steps.commit.outputs.hash }}"
+          BUILD_DATE=$(date +%Y-%m-%d)
+          BINARY_NAME="syncmt-${VERSION}-linux-x86_64"
+          
           echo "Building version: ${VERSION}"
+          echo "Git commit: ${COMMIT}"
+          echo "Build date: ${BUILD_DATE}"
+          echo "Binary name: ${BINARY_NAME}"
           echo "=== Compiler Info ==="
           ${{ github.workspace }}/clang/bin/clang++ --version
           echo "=== Building ==="
-          ${{ github.workspace }}/clang/bin/clang++ -static -O2 -std=c++20 --target=x86_64-linux-musl main.cpp -o syncmt-${VERSION}
-          ls -lh syncmt-${VERSION}
-          file syncmt-${VERSION}
+          ${{ github.workspace }}/clang/bin/clang++ \
+            -DVERSION="\"${VERSION}\"" \
+            -DGIT_COMMIT="\"${COMMIT}\"" \
+            -DBUILD_DATE="\"${BUILD_DATE}\"" \
+            -static -O2 -std=c++20 \
+            --target=x86_64-linux-musl \
+            main.cpp -o ${BINARY_NAME}
+          ls -lh ${BINARY_NAME}
+          file ${BINARY_NAME}
+          
+          echo "BINARY_NAME=${BINARY_NAME}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "COMMIT=${COMMIT}" >> $GITHUB_ENV
       
       - name: Create Release and Upload Asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ inputs.version }}-${{ steps.commit.outputs.hash }}"
-          echo "=== Creating Release v${VERSION} ==="
+          echo "=== Creating Release v${{ env.VERSION }} ==="
           
-          gh release create v${VERSION} \
-            --title "Release v${VERSION}" \
-            --notes "## Release v${VERSION}
+          gh release create v${{ env.VERSION }} \
+            --title "Release v${{ env.VERSION }}" \
+            --notes "## Release v${{ env.VERSION }}
 
           ### Build Information
-          - **Version**: ${{ inputs.version }}
-          - **Commit**: ${{ steps.commit.outputs.hash }}
+          - **Version**: ${{ env.VERSION }}
+          - **Commit**: ${{ env.COMMIT }}
           - **Compiler**: Clang 22 with musl-static
           - **Platform**: Linux x86_64
           - **Build Date**: $(TZ='Asia/Shanghai' date +"%Y-%m-%d %H:%M:%S UTC+8")
 
           ### Binary
-          - \`syncmt-${VERSION}\`: Static linked binary for Linux x86_64" \
-            ./syncmt-${VERSION}
+          - \`${{ env.BINARY_NAME }}\`: Static linked binary for Linux x86_64" \
+            ./${{ env.BINARY_NAME }}
