@@ -86,7 +86,7 @@ jobs:
           - **Commit**: ${{ steps.commit.outputs.hash }}
           - **Compiler**: Clang 22 with musl-static
           - **Platform**: Linux x86_64
-          - **Build Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          - **Build Date**: $(TZ='Asia/Shanghai' date +"%Y-%m-%d %H:%M:%S UTC+8")
 
           ### Binary
           - \`syncmt-${VERSION}\`: Static linked binary for Linux x86_64" \
