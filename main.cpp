@@ -14,8 +14,11 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/sendfile.h>
 #include <sys/mman.h>
 #include <cerrno>
+#include <dirent.h>
+#include <unordered_set>
 
 namespace fs = std::filesystem;
 
@@ -146,10 +149,10 @@ class ThreadPool {
 public:
     ThreadPool(size_t num_threads, std::atomic<size_t>* processed_files_ptr, 
                std::atomic<uint64_t>* copied_bytes_ptr, ConflictResolution conflict_resolution, 
-               bool verbose)
+               bool verbose, std::unordered_set<fs::path>* created_dirs_ptr)
         : stop(false), processed_files_ptr(processed_files_ptr), 
           copied_bytes_ptr(copied_bytes_ptr), conflict_resolution(conflict_resolution), 
-          verbose(verbose) {
+          verbose(verbose), created_dirs_ptr(created_dirs_ptr) {
         workers.reserve(num_threads);
         for (size_t i = 0; i < num_threads; ++i) {
             workers.emplace_back([this] {
@@ -199,14 +202,21 @@ private:
     std::atomic<uint64_t>* copied_bytes_ptr;
     ConflictResolution conflict_resolution;
     bool verbose;
+    std::unordered_set<fs::path>* created_dirs_ptr;
 
     [[nodiscard]] static size_t calculate_chunk_size(uint64_t file_size) {
         if (file_size < SMALL_FILE_THRESHOLD) {
             return MIN_CHUNK_SIZE;
         } else if (file_size < LARGE_FILE_THRESHOLD) {
-            return 1024 * 1024;
+            size_t adaptive_size = file_size / 10;
+            adaptive_size = std::max(adaptive_size, MIN_CHUNK_SIZE);
+            adaptive_size = std::min(adaptive_size, MAX_CHUNK_SIZE);
+            return adaptive_size;
         } else {
-            return MAX_CHUNK_SIZE;
+            size_t adaptive_size = file_size / 100;
+            adaptive_size = std::max(adaptive_size, static_cast<size_t>(1024 * 1024));
+            adaptive_size = std::min(adaptive_size, MAX_CHUNK_SIZE);
+            return adaptive_size;
         }
     }
 
@@ -235,9 +245,9 @@ private:
 
             uint64_t file_size = fs::file_size(task.src);
             if (task.is_move) {
-                move_file(task.src, task.dst);
+                move_file(task.src, task.dst, *created_dirs_ptr);
             } else {
-                copy_file(task.src, task.dst);
+                copy_file(task.src, task.dst, *created_dirs_ptr);
             }
             (*processed_files_ptr)++;
             (*copied_bytes_ptr) += file_size;
@@ -247,7 +257,7 @@ private:
         }
     }
 
-    static void copy_file(const fs::path& src, const fs::path& dst) {
+    static void copy_file(const fs::path& src, const fs::path& dst, std::unordered_set<fs::path>& created_dirs) {
         FileDescriptor src_fd(src.c_str(), O_RDONLY);
         
         struct stat src_stat;
@@ -260,43 +270,41 @@ private:
         posix_fadvise(src_fd.get(), 0, src_stat.st_size, POSIX_FADV_SEQUENTIAL);
 
         fs::path dst_parent = dst.parent_path();
-        if (!dst_parent.empty() && !fs::exists(dst_parent)) {
-            fs::create_directories(dst_parent);
+        if (!dst_parent.empty()) {
+            if (created_dirs.find(dst_parent) == created_dirs.end()) {
+                if (!fs::exists(dst_parent)) {
+                    fs::create_directories(dst_parent);
+                }
+                created_dirs.insert(dst_parent);
+            }
         }
 
         FileDescriptor dst_fd(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode);
 
-        size_t chunk_size = calculate_chunk_size(src_stat.st_size);
-        size_t remaining = src_stat.st_size;
+        if (src_stat.st_size > 0) {
+            if (fallocate(dst_fd.get(), 0, 0, src_stat.st_size) == -1) {
+                if (errno != ENOTSUP && errno != EOPNOTSUPP) {
+                    throw std::runtime_error(std::string("Failed to fallocate: ") + dst.string() +
+                                           " (errno: " + std::to_string(errno) + 
+                                           " - " + strerror(errno) + ")");
+                }
+            }
+        }
+
         off_t offset = 0;
+        size_t remaining = src_stat.st_size;
 
         while (remaining > 0) {
-            size_t to_map = std::min(remaining, chunk_size);
-            void* src_addr = mmap(nullptr, to_map, PROT_READ, MAP_PRIVATE, src_fd.get(), offset);
+            size_t chunk_size = calculate_chunk_size(remaining);
+            ssize_t sent = sendfile(dst_fd.get(), src_fd.get(), &offset, chunk_size);
             
-            if (src_addr == MAP_FAILED) {
-                throw std::runtime_error(std::string("Failed to mmap source file: ") + src.string() +
+            if (sent == -1) {
+                throw std::runtime_error(std::string("Failed to sendfile: ") + src.string() + " -> " + dst.string() +
                                        " (errno: " + std::to_string(errno) + 
                                        " - " + strerror(errno) + ")");
             }
 
-            ssize_t written = write(dst_fd.get(), src_addr, to_map);
-            
-            if (written == -1) {
-                munmap(src_addr, to_map);
-                throw std::runtime_error(std::string("Failed to write to destination file: ") + dst.string() +
-                                       " (errno: " + std::to_string(errno) + 
-                                       " - " + strerror(errno) + ")");
-            }
-
-            if (static_cast<size_t>(written) != to_map) {
-                munmap(src_addr, to_map);
-                throw std::runtime_error(std::string("Incomplete write to destination file: ") + dst.string());
-            }
-
-            munmap(src_addr, to_map);
-            offset += written;
-            remaining -= written;
+            remaining -= sent;
         }
 
         struct timespec times[2];
@@ -305,10 +313,15 @@ private:
         utimensat(AT_FDCWD, dst.c_str(), times, 0);
     }
 
-    static void move_file(const fs::path& src, const fs::path& dst) {
+    static void move_file(const fs::path& src, const fs::path& dst, std::unordered_set<fs::path>& created_dirs) {
         fs::path dst_parent = dst.parent_path();
-        if (!dst_parent.empty() && !fs::exists(dst_parent)) {
-            fs::create_directories(dst_parent);
+        if (!dst_parent.empty()) {
+            if (created_dirs.find(dst_parent) == created_dirs.end()) {
+                if (!fs::exists(dst_parent)) {
+                    fs::create_directories(dst_parent);
+                }
+                created_dirs.insert(dst_parent);
+            }
         }
 
         if (rename(src.c_str(), dst.c_str()) == 0) {
@@ -316,7 +329,7 @@ private:
         }
 
         if (errno == EXDEV) {
-            copy_file(src, dst);
+            copy_file(src, dst, created_dirs);
             fs::remove(src);
         } else {
             throw std::runtime_error(std::string("Failed to move file: ") + src.string() +
@@ -333,7 +346,7 @@ std::mutex ThreadPool::cout_mutex;
 class FileCopier {
 public:
     FileCopier(size_t num_threads, bool move_mode, bool verbose, ConflictResolution conflict_resolution)
-        : pool(num_threads, &processed_files, &copied_bytes, conflict_resolution, verbose), 
+        : pool(num_threads, &processed_files, &copied_bytes, conflict_resolution, verbose, &created_dirs), 
           move_mode(move_mode), verbose(verbose), 
           conflict_resolution(conflict_resolution),
           total_files(0), processed_files(0), total_bytes(0), copied_bytes(0),
@@ -389,6 +402,66 @@ private:
     std::atomic<uint64_t> copied_bytes;
     std::chrono::high_resolution_clock::time_point start_time;
     std::chrono::high_resolution_clock::time_point last_progress_update;
+    std::unordered_set<fs::path> created_dirs;
+    std::mutex cout_mutex;
+
+    void scan_directory_native(const fs::path& src_dir, const fs::path& dst_dir, 
+                                std::vector<FileTask>& tasks, size_t& scan_counter, bool pipeline = false) {
+        DIR* dir = opendir(src_dir.c_str());
+        if (!dir) {
+            throw std::runtime_error(std::string("Failed to open directory: ") + src_dir.string() +
+                                   " (errno: " + std::to_string(errno) + 
+                                   " - " + strerror(errno) + ")");
+        }
+
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
+            }
+
+            fs::path entry_path = src_dir / entry->d_name;
+            struct stat st;
+            if (stat(entry_path.c_str(), &st) == -1) {
+                closedir(dir);
+                throw std::runtime_error(std::string("Failed to stat: ") + entry_path.string() +
+                                       " (errno: " + std::to_string(errno) + 
+                                       " - " + strerror(errno) + ")");
+            }
+
+            if (S_ISREG(st.st_mode)) {
+                fs::path rel_path = fs::relative(entry_path, src_dir);
+                fs::path dst_path = dst_dir / rel_path;
+
+                total_files++;
+                total_bytes += st.st_size;
+
+                FileTask task{entry_path, dst_path, move_mode, conflict_resolution};
+                
+                if (pipeline) {
+                    pool.enqueue(task);
+                } else {
+                    tasks.push_back(task);
+                }
+
+                scan_counter++;
+                if (scan_counter % 1000 == 0) {
+                    update_scan_progress(total_files.load(), total_bytes.load());
+                    
+                    if (!pipeline && tasks.size() >= 1000) {
+                        for (auto& t : tasks) {
+                            pool.enqueue(std::move(t));
+                        }
+                        tasks.clear();
+                    }
+                }
+            } else if (S_ISDIR(st.st_mode)) {
+                scan_directory_native(entry_path, dst_dir / entry->d_name, tasks, scan_counter, pipeline);
+            }
+        }
+
+        closedir(dir);
+    }
 
     void update_progress() {
         auto now = std::chrono::high_resolution_clock::now();
@@ -418,6 +491,7 @@ private:
         int bar_width = 40;
         int filled = static_cast<int>(file_progress * bar_width / 100.0);
 
+        std::lock_guard<std::mutex> lock(cout_mutex);
         std::cout << "\r[";
         for (int i = 0; i < bar_width; ++i) {
             if (i < filled) {
@@ -461,49 +535,41 @@ private:
         std::cout << "Scanning directory: " << src_dir << "..." << std::endl;
         std::cout.flush();
 
-        std::vector<FileTask> tasks;
-        size_t scan_counter = 0;
-        constexpr size_t SCAN_UPDATE_INTERVAL = 1000;
+        std::atomic<bool> scan_done{false};
+        std::thread scan_thread([this, &src_dir, &dst_dir, &scan_done]() {
+            std::vector<FileTask> tasks;
+            size_t scan_counter = 0;
+            scan_directory_native(src_dir, dst_dir, tasks, scan_counter, false);
+            
+            for (auto& task : tasks) {
+                pool.enqueue(std::move(task));
+            }
+            
+            scan_done.store(true);
+        });
+
         auto scan_start_time = std::chrono::high_resolution_clock::now();
 
-        for (const auto& entry : fs::recursive_directory_iterator(src_dir)) {
-            if (entry.is_regular_file()) {
-                fs::path rel_path = fs::relative(entry.path(), src_dir);
-                fs::path dst_path = dst_dir / rel_path;
-
-                total_files++;
-                total_bytes += entry.file_size();
-
-                tasks.push_back({entry.path(), dst_path, move_mode, conflict_resolution});
-
-                scan_counter++;
-                if (scan_counter % SCAN_UPDATE_INTERVAL == 0) {
-                    update_scan_progress(total_files.load(), total_bytes.load());
-                }
+        while (!scan_done.load() || processed_files.load() < total_files.load()) {
+            if (!scan_done.load()) {
+                update_scan_progress(total_files.load(), total_bytes.load());
+            } else {
+                update_progress();
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(PROGRESS_UPDATE_INTERVAL_MS));
         }
+
+        scan_thread.join();
 
         auto scan_end_time = std::chrono::high_resolution_clock::now();
         auto scan_duration = std::chrono::duration_cast<std::chrono::milliseconds>(scan_end_time - scan_start_time);
         double scan_seconds = scan_duration.count() / 1000.0;
 
-        std::cout << "\rScanning: [" << total_files.load() << " files, " 
+        std::cout << "\r" << std::string(100, ' ') << "\r";
+        std::cout << "Scan complete: [" << total_files.load() << " files, " 
                   << std::fixed << std::setprecision(2) 
-                  << (total_bytes.load() / (1024.0 * 1024.0)) << " MB] Done! ("
+                  << (total_bytes.load() / (1024.0 * 1024.0)) << " MB] ("
                   << std::setprecision(2) << scan_seconds << "s)" << std::endl;
-        std::cout << "Starting copy operation..." << std::endl;
-        std::cout.flush();
-
-        tasks.reserve(tasks.size());
-
-        for (auto& task : tasks) {
-            pool.enqueue(std::move(task));
-        }
-
-        while (processed_files.load() < total_files.load()) {
-            update_progress();
-            std::this_thread::sleep_for(std::chrono::milliseconds(PROGRESS_UPDATE_INTERVAL_MS));
-        }
     }
 
     void process_single_file(const fs::path& src, const fs::path& dst) {
