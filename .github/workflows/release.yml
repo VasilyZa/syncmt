@@ -187,11 +187,8 @@ EOF
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "=== Creating Release v${{ env.VERSION }} ==="
-          
-          gh release create v${{ env.VERSION }} \
-            --title "Release v${{ env.VERSION }}" \
-            --notes "## Release v${{ env.VERSION }}
+          cat > release_notes.txt << 'EOF'
+          ## Release v${{ env.VERSION }}
 
           ### Build Information
           - **Version**: ${{ env.VERSION }}
@@ -201,8 +198,8 @@ EOF
           - **Build Date**: $(TZ='Asia/Shanghai' date +"%Y-%m-%d %H:%M:%S UTC+8")
 
           ### Binaries
-          - \`${{ env.BINARY_NAME }}\`: Static linked binary for Linux x86_64
-          - \`${{ env.DEB_PACKAGE }}\`: Debian package (.deb) for easy installation
+          - `${{ env.BINARY_NAME }}`: Static linked binary for Linux x86_64
+          - `${{ env.DEB_PACKAGE }}`: Debian package (.deb) for easy installation
 
           ### Installation
           **Using .deb package (recommended):**
@@ -214,6 +211,12 @@ EOF
           \`\`\`bash
           chmod +x ${{ env.BINARY_NAME }}
           sudo mv ${{ env.BINARY_NAME }} /usr/local/bin/syncmt
-          \`\`\`" \
+          \`\`\`
+          EOF
+          
+          echo "=== Creating Release v${{ env.VERSION }} ==="
+          gh release create v${{ env.VERSION }} \
+            --title "Release v${{ env.VERSION }}" \
+            --notes-file release_notes.txt \
             ./${{ env.BINARY_NAME }} \
             ./${{ env.DEB_PACKAGE }}
