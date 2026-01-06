@@ -235,7 +235,7 @@ private:
         }
     }
 
-    [[nodiscard]] static void copy_file(const fs::path& src, const fs::path& dst) {
+    static void copy_file(const fs::path& src, const fs::path& dst) {
         FileDescriptor src_fd(src.c_str(), O_RDONLY);
         
         struct stat src_stat;
@@ -293,7 +293,7 @@ private:
         utimensat(AT_FDCWD, dst.c_str(), times, 0);
     }
 
-    [[nodiscard]] static void move_file(const fs::path& src, const fs::path& dst) {
+    static void move_file(const fs::path& src, const fs::path& dst) {
         fs::path dst_parent = dst.parent_path();
         if (!dst_parent.empty() && !fs::exists(dst_parent)) {
             fs::create_directories(dst_parent);
