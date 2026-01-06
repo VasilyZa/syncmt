@@ -14,9 +14,17 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <sys/sendfile.h>
+#include <sys/mman.h>
+#include <cerrno>
 
 namespace fs = std::filesystem;
+
+constexpr size_t DEFAULT_THREADS = 4;
+constexpr size_t MIN_CHUNK_SIZE = 64 * 1024;
+constexpr size_t MAX_CHUNK_SIZE = 16 * 1024 * 1024;
+constexpr size_t SMALL_FILE_THRESHOLD = 1024 * 1024;
+constexpr size_t LARGE_FILE_THRESHOLD = 100 * 1024 * 1024;
+constexpr size_t PROGRESS_UPDATE_INTERVAL_MS = 100;
 
 enum class ConflictResolution {
     OVERWRITE,
@@ -31,10 +39,106 @@ struct FileTask {
     ConflictResolution conflict_resolution;
 };
 
+class FileDescriptor {
+    int fd;
+public:
+    FileDescriptor(const char* path, int flags, mode_t mode = 0) : fd(open(path, flags, mode)) {
+        if (fd == -1) {
+            throw std::runtime_error(std::string("Failed to open file: ") + path + 
+                                   " (errno: " + std::to_string(errno) + 
+                                   " - " + strerror(errno) + ")");
+        }
+    }
+
+    ~FileDescriptor() {
+        if (fd != -1) {
+            close(fd);
+        }
+    }
+
+    FileDescriptor(const FileDescriptor&) = delete;
+    FileDescriptor& operator=(const FileDescriptor&) = delete;
+
+    FileDescriptor(FileDescriptor&& other) noexcept : fd(other.fd) {
+        other.fd = -1;
+    }
+
+    FileDescriptor& operator=(FileDescriptor&& other) noexcept {
+        if (this != &other) {
+            if (fd != -1) {
+                close(fd);
+            }
+            fd = other.fd;
+            other.fd = -1;
+        }
+        return *this;
+    }
+
+    operator int() const { return fd; }
+    int get() const { return fd; }
+};
+
+class MappedFile {
+    void* addr;
+    size_t length;
+    int fd;
+
+public:
+    MappedFile(void* addr, size_t length, int fd) 
+        : addr(addr), length(length), fd(fd) {}
+
+    ~MappedFile() {
+        if (addr != MAP_FAILED) {
+            msync(addr, length, MS_SYNC);
+            munmap(addr, length);
+        }
+        if (fd != -1) {
+            close(fd);
+        }
+    }
+
+    MappedFile(const MappedFile&) = delete;
+    MappedFile& operator=(const MappedFile&) = delete;
+
+    MappedFile(MappedFile&& other) noexcept 
+        : addr(other.addr), length(other.length), fd(other.fd) {
+        other.addr = MAP_FAILED;
+        other.length = 0;
+        other.fd = -1;
+    }
+
+    MappedFile& operator=(MappedFile&& other) noexcept {
+        if (this != &other) {
+            if (addr != MAP_FAILED) {
+                msync(addr, length, MS_SYNC);
+                munmap(addr, length);
+            }
+            if (fd != -1) {
+                close(fd);
+            }
+            addr = other.addr;
+            length = other.length;
+            fd = other.fd;
+            other.addr = MAP_FAILED;
+            other.length = 0;
+            other.fd = -1;
+        }
+        return *this;
+    }
+
+    void* data() const { return addr; }
+    size_t size() const { return length; }
+};
+
 class ThreadPool {
 public:
-    ThreadPool(size_t num_threads, std::atomic<size_t>* processed_files_ptr, std::atomic<uint64_t>* copied_bytes_ptr, ConflictResolution conflict_resolution, bool verbose)
-        : stop(false), processed_files_ptr(processed_files_ptr), copied_bytes_ptr(copied_bytes_ptr), conflict_resolution(conflict_resolution), verbose(verbose) {
+    ThreadPool(size_t num_threads, std::atomic<size_t>* processed_files_ptr, 
+               std::atomic<uint64_t>* copied_bytes_ptr, ConflictResolution conflict_resolution, 
+               bool verbose)
+        : stop(false), processed_files_ptr(processed_files_ptr), 
+          copied_bytes_ptr(copied_bytes_ptr), conflict_resolution(conflict_resolution), 
+          verbose(verbose) {
+        workers.reserve(num_threads);
         for (size_t i = 0; i < num_threads; ++i) {
             workers.emplace_back([this] {
                 for (;;) {
@@ -84,6 +188,16 @@ private:
     ConflictResolution conflict_resolution;
     bool verbose;
 
+    [[nodiscard]] static size_t calculate_chunk_size(uint64_t file_size) {
+        if (file_size < SMALL_FILE_THRESHOLD) {
+            return MIN_CHUNK_SIZE;
+        } else if (file_size < LARGE_FILE_THRESHOLD) {
+            return 1024 * 1024;
+        } else {
+            return MAX_CHUNK_SIZE;
+        }
+    }
+
     void process_task(const FileTask& task) {
         try {
             if (fs::exists(task.dst)) {
@@ -102,7 +216,8 @@ private:
                         }
                         break;
                     case ConflictResolution::ERROR:
-                        throw std::runtime_error("Destination file already exists");
+                        throw std::runtime_error(std::string("Destination file already exists: ") + 
+                                               task.dst.string());
                 }
             }
 
@@ -120,46 +235,57 @@ private:
         }
     }
 
-    static void copy_file(const fs::path& src, const fs::path& dst) {
-        int src_fd = open(src.c_str(), O_RDONLY);
-        if (src_fd == -1) {
-            throw std::runtime_error("Failed to open source file");
+    [[nodiscard]] static void copy_file(const fs::path& src, const fs::path& dst) {
+        FileDescriptor src_fd(src.c_str(), O_RDONLY);
+        
+        struct stat src_stat;
+        if (fstat(src_fd.get(), &src_stat) == -1) {
+            throw std::runtime_error(std::string("Failed to stat source file: ") + src.string() +
+                                   " (errno: " + std::to_string(errno) + 
+                                   " - " + strerror(errno) + ")");
         }
 
-        struct stat src_stat;
-        if (fstat(src_fd, &src_stat) == -1) {
-            close(src_fd);
-            throw std::runtime_error("Failed to stat source file");
-        }
+        posix_fadvise(src_fd.get(), 0, src_stat.st_size, POSIX_FADV_SEQUENTIAL);
 
         fs::path dst_parent = dst.parent_path();
         if (!dst_parent.empty() && !fs::exists(dst_parent)) {
             fs::create_directories(dst_parent);
         }
 
-        int dst_fd = open(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode);
-        if (dst_fd == -1) {
-            close(src_fd);
-            throw std::runtime_error("Failed to create destination file");
-        }
+        FileDescriptor dst_fd(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode);
 
-        off_t offset = 0;
+        size_t chunk_size = calculate_chunk_size(src_stat.st_size);
         size_t remaining = src_stat.st_size;
-        const size_t chunk_size = 1024 * 1024;
+        off_t offset = 0;
 
         while (remaining > 0) {
-            size_t to_copy = std::min(remaining, chunk_size);
-            ssize_t sent = sendfile(dst_fd, src_fd, &offset, to_copy);
-            if (sent == -1) {
-                close(src_fd);
-                close(dst_fd);
-                throw std::runtime_error("Failed to copy file data");
+            size_t to_map = std::min(remaining, chunk_size);
+            void* src_addr = mmap(nullptr, to_map, PROT_READ, MAP_PRIVATE, src_fd.get(), offset);
+            
+            if (src_addr == MAP_FAILED) {
+                throw std::runtime_error(std::string("Failed to mmap source file: ") + src.string() +
+                                       " (errno: " + std::to_string(errno) + 
+                                       " - " + strerror(errno) + ")");
             }
-            remaining -= sent;
-        }
 
-        close(src_fd);
-        close(dst_fd);
+            ssize_t written = write(dst_fd.get(), src_addr, to_map);
+            
+            if (written == -1) {
+                munmap(src_addr, to_map);
+                throw std::runtime_error(std::string("Failed to write to destination file: ") + dst.string() +
+                                       " (errno: " + std::to_string(errno) + 
+                                       " - " + strerror(errno) + ")");
+            }
+
+            if (static_cast<size_t>(written) != to_map) {
+                munmap(src_addr, to_map);
+                throw std::runtime_error(std::string("Incomplete write to destination file: ") + dst.string());
+            }
+
+            munmap(src_addr, to_map);
+            offset += written;
+            remaining -= written;
+        }
 
         struct timespec times[2];
         times[0] = src_stat.st_atim;
@@ -167,7 +293,7 @@ private:
         utimensat(AT_FDCWD, dst.c_str(), times, 0);
     }
 
-    static void move_file(const fs::path& src, const fs::path& dst) {
+    [[nodiscard]] static void move_file(const fs::path& src, const fs::path& dst) {
         fs::path dst_parent = dst.parent_path();
         if (!dst_parent.empty() && !fs::exists(dst_parent)) {
             fs::create_directories(dst_parent);
@@ -181,7 +307,9 @@ private:
             copy_file(src, dst);
             fs::remove(src);
         } else {
-            throw std::runtime_error("Failed to move file");
+            throw std::runtime_error(std::string("Failed to move file: ") + src.string() +
+                                   " (errno: " + std::to_string(errno) + 
+                                   " - " + strerror(errno) + ")");
         }
     }
 
@@ -193,9 +321,12 @@ std::mutex ThreadPool::cout_mutex;
 class FileCopier {
 public:
     FileCopier(size_t num_threads, bool move_mode, bool verbose, ConflictResolution conflict_resolution)
-        : pool(num_threads, &processed_files, &copied_bytes, conflict_resolution, verbose), move_mode(move_mode), verbose(verbose), conflict_resolution(conflict_resolution),
+        : pool(num_threads, &processed_files, &copied_bytes, conflict_resolution, verbose), 
+          move_mode(move_mode), verbose(verbose), 
+          conflict_resolution(conflict_resolution),
           total_files(0), processed_files(0), total_bytes(0), copied_bytes(0),
-          start_time(std::chrono::high_resolution_clock::now()), last_progress_update(start_time) {}
+          start_time(std::chrono::high_resolution_clock::now()), 
+          last_progress_update(start_time) {}
 
     void process(const std::vector<fs::path>& sources, const fs::path& dst) {
         start_time = std::chrono::high_resolution_clock::now();
@@ -251,7 +382,7 @@ private:
         auto now = std::chrono::high_resolution_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_progress_update);
 
-        if (elapsed.count() < 100) {
+        if (elapsed.count() < PROGRESS_UPDATE_INTERVAL_MS) {
             return;
         }
 
@@ -306,13 +437,15 @@ private:
             }
         }
 
+        tasks.reserve(tasks.size());
+
         for (auto& task : tasks) {
             pool.enqueue(std::move(task));
         }
 
         while (processed_files.load() < total_files.load()) {
             update_progress();
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(PROGRESS_UPDATE_INTERVAL_MS));
         }
     }
 
@@ -324,7 +457,7 @@ private:
 
         while (processed_files.load() < total_files.load()) {
             update_progress();
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(PROGRESS_UPDATE_INTERVAL_MS));
         }
     }
 
@@ -345,7 +478,7 @@ private:
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [OPTIONS] <source>... <destination>" << std::endl;
     std::cout << "\nOptions:" << std::endl;
-    std::cout << "  -t, --threads <num>   Number of threads (default: 4)" << std::endl;
+    std::cout << "  -t, --threads <num>   Number of threads (default: " << DEFAULT_THREADS << ")" << std::endl;
     std::cout << "  -m, --move            Move files instead of copying" << std::endl;
     std::cout << "  -v, --verbose         Enable verbose output" << std::endl;
     std::cout << "  -o, --overwrite       Overwrite existing files" << std::endl;
@@ -354,7 +487,7 @@ void print_usage(const char* program_name) {
 }
 
 int main(int argc, char* argv[]) {
-    size_t num_threads = 4;
+    size_t num_threads = DEFAULT_THREADS;
     bool move_mode = false;
     bool verbose = false;
     ConflictResolution conflict_resolution = ConflictResolution::ERROR;
