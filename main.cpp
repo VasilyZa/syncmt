@@ -19,6 +19,7 @@
 
 namespace fs = std::filesystem;
 
+constexpr char VERSION[] = "1.1.2";
 constexpr size_t DEFAULT_THREADS = 4;
 constexpr size_t MIN_CHUNK_SIZE = 64 * 1024;
 constexpr size_t MAX_CHUNK_SIZE = 16 * 1024 * 1024;
@@ -483,7 +484,12 @@ void print_usage(const char* program_name) {
     std::cout << "  -v, --verbose         Enable verbose output" << std::endl;
     std::cout << "  -o, --overwrite       Overwrite existing files" << std::endl;
     std::cout << "  -s, --skip            Skip existing files" << std::endl;
+    std::cout << "  -V, --version         Print version information" << std::endl;
     std::cout << "  -h, --help            Show this help message" << std::endl;
+}
+
+void print_version() {
+    std::cout << "syncmt version " << VERSION << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -508,6 +514,9 @@ int main(int argc, char* argv[]) {
             conflict_resolution = ConflictResolution::OVERWRITE;
         } else if (arg == "-s" || arg == "--skip") {
             conflict_resolution = ConflictResolution::SKIP;
+        } else if (arg == "-V" || arg == "--version") {
+            print_version();
+            return 0;
         } else if (arg == "-h" || arg == "--help") {
             print_usage(argv[0]);
             return 0;
