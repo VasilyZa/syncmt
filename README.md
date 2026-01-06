@@ -51,6 +51,9 @@
 | `-o, --overwrite` | 覆盖已存在的文件 |
 | `-s, --skip` | 跳过已存在的文件 |
 | `-h, --help` | 显示帮助信息 |
+| `<source>` | 源文件或目录路径 |
+| `<destination>` | 目标文件或目录路径 |
+| `-V, --version` | 显示版本信息 |
 
 
 <div align="center">
