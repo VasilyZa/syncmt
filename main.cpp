@@ -41,6 +41,8 @@ constexpr size_t SMALL_FILE_THRESHOLD = 1024 * 1024;
 constexpr size_t LARGE_FILE_THRESHOLD = 100 * 1024 * 1024;
 constexpr size_t PROGRESS_UPDATE_INTERVAL_MS = 100;
 
+bool use_chinese = false;
+
 enum class ConflictResolution {
     OVERWRITE,
     SKIP,
@@ -227,19 +229,32 @@ private:
                     case ConflictResolution::SKIP:
                         if (verbose) {
                             std::lock_guard<std::mutex> lock(cout_mutex);
-                            std::cout << "Skipping existing file: " << task.dst << std::endl;
+                            if (use_chinese) {
+                                std::cout << "跳过已存在的文件: " << task.dst << std::endl;
+                            } else {
+                                std::cout << "Skipping existing file: " << task.dst << std::endl;
+                            }
                         }
                         (*processed_files_ptr)++;
                         return;
                     case ConflictResolution::OVERWRITE:
                         if (verbose) {
                             std::lock_guard<std::mutex> lock(cout_mutex);
-                            std::cout << "Overwriting existing file: " << task.dst << std::endl;
+                            if (use_chinese) {
+                                std::cout << "覆盖已存在的文件: " << task.dst << std::endl;
+                            } else {
+                                std::cout << "Overwriting existing file: " << task.dst << std::endl;
+                            }
                         }
                         break;
                     case ConflictResolution::ERROR:
-                        throw std::runtime_error(std::string("Destination file already exists: ") + 
-                                               task.dst.string());
+                        if (use_chinese) {
+                            throw std::runtime_error(std::string("目标文件已存在: ") + 
+                                                   task.dst.string());
+                        } else {
+                            throw std::runtime_error(std::string("Destination file already exists: ") + 
+                                                   task.dst.string());
+                        }
                 }
             }
 
@@ -253,7 +268,11 @@ private:
             (*copied_bytes_ptr) += file_size;
         } catch (const std::exception& e) {
             std::lock_guard<std::mutex> lock(cout_mutex);
-            std::cerr << "Error processing " << task.src << ": " << e.what() << std::endl;
+            if (use_chinese) {
+                std::cerr << "处理 " << task.src << " 时出错: " << e.what() << std::endl;
+            } else {
+                std::cerr << "Error processing " << task.src << ": " << e.what() << std::endl;
+            }
         }
     }
 
@@ -363,7 +382,11 @@ public:
             } else if (fs::is_regular_file(src)) {
                 process_single_file(src, dst / src.filename());
             } else {
-                std::cerr << "Warning: Skipping non-regular file: " << src << std::endl;
+                if (use_chinese) {
+                    std::cerr << "警告: 跳过非常规文件: " << src << std::endl;
+                } else {
+                    std::cerr << "Warning: Skipping non-regular file: " << src << std::endl;
+                }
             }
         }
 
@@ -504,10 +527,19 @@ private:
         }
         std::cout << "] ";
         std::cout << std::fixed << std::setprecision(1) << file_progress << "% ";
-        std::cout << "(" << processed << "/" << total << " files, ";
+        if (use_chinese) {
+            std::cout << "(" << processed << "/" << total << " 个文件, ";
+        } else {
+            std::cout << "(" << processed << "/" << total << " files, ";
+        }
         std::cout << std::setprecision(2) << (copied / (1024.0 * 1024.0)) << "/";
         std::cout << std::setprecision(2) << (total_b / (1024.0 * 1024.0)) << " MB, ";
-        std::cout << std::setprecision(1) << speed << " MB/s, ETA: ";
+        std::cout << std::setprecision(1) << speed << " MB/s, ";
+        if (use_chinese) {
+            std::cout << "预计剩余时间: ";
+        } else {
+            std::cout << "ETA: ";
+        }
         
         if (eta < 60) {
             std::cout << std::setprecision(0) << eta << "s";
@@ -525,14 +557,24 @@ private:
     }
 
     void update_scan_progress(size_t scanned_files, uint64_t scanned_bytes) {
-        std::cout << "\rScanning: [" << scanned_files << " files, " 
-                  << std::fixed << std::setprecision(2) 
-                  << (scanned_bytes / (1024.0 * 1024.0)) << " MB]... ";
+        if (use_chinese) {
+            std::cout << "\r扫描中: [" << scanned_files << " 个文件, " 
+                      << std::fixed << std::setprecision(2) 
+                      << (scanned_bytes / (1024.0 * 1024.0)) << " MB]... ";
+        } else {
+            std::cout << "\rScanning: [" << scanned_files << " files, " 
+                      << std::fixed << std::setprecision(2) 
+                      << (scanned_bytes / (1024.0 * 1024.0)) << " MB]... ";
+        }
         std::cout.flush();
     }
 
     void process_directory(const fs::path& src_dir, const fs::path& dst_dir) {
-        std::cout << "Scanning directory: " << src_dir << "..." << std::endl;
+        if (use_chinese) {
+            std::cout << "扫描目录: " << src_dir << "..." << std::endl;
+        } else {
+            std::cout << "Scanning directory: " << src_dir << "..." << std::endl;
+        }
         std::cout.flush();
 
         std::atomic<bool> scan_done{false};
@@ -566,10 +608,17 @@ private:
         double scan_seconds = scan_duration.count() / 1000.0;
 
         std::cout << "\r" << std::string(100, ' ') << "\r";
-        std::cout << "Scan complete: [" << total_files.load() << " files, " 
-                  << std::fixed << std::setprecision(2) 
-                  << (total_bytes.load() / (1024.0 * 1024.0)) << " MB] ("
-                  << std::setprecision(2) << scan_seconds << "s)" << std::endl;
+        if (use_chinese) {
+            std::cout << "扫描完成: [" << total_files.load() << " 个文件, " 
+                      << std::fixed << std::setprecision(2) 
+                      << (total_bytes.load() / (1024.0 * 1024.0)) << " MB] ("
+                      << std::setprecision(2) << scan_seconds << "秒)" << std::endl;
+        } else {
+            std::cout << "Scan complete: [" << total_files.load() << " files, " 
+                      << std::fixed << std::setprecision(2) 
+                      << (total_bytes.load() / (1024.0 * 1024.0)) << " MB] ("
+                      << std::setprecision(2) << scan_seconds << "s)" << std::endl;
+        }
     }
 
     void process_single_file(const fs::path& src, const fs::path& dst) {
@@ -588,26 +637,50 @@ private:
         double seconds = duration.count() / 1000.0;
         double speed = copied_bytes.load() / (1024.0 * 1024.0) / seconds;
 
-        std::cout << "\n=== Statistics ===" << std::endl;
-        std::cout << "Total files: " << total_files.load() << std::endl;
-        std::cout << "Processed files: " << processed_files.load() << std::endl;
-        std::cout << "Total bytes: " << total_bytes.load() << std::endl;
-        std::cout << "Copied bytes: " << copied_bytes.load() << std::endl;
-        std::cout << "Time elapsed: " << seconds << " seconds" << std::endl;
-        std::cout << "Speed: " << speed << " MB/s" << std::endl;
+        if (use_chinese) {
+            std::cout << "\n=== 统计信息 ===" << std::endl;
+            std::cout << "总文件数: " << total_files.load() << std::endl;
+            std::cout << "已处理文件: " << processed_files.load() << std::endl;
+            std::cout << "总字节数: " << total_bytes.load() << std::endl;
+            std::cout << "已复制字节: " << copied_bytes.load() << std::endl;
+            std::cout << "耗时: " << seconds << " 秒" << std::endl;
+            std::cout << "速度: " << speed << " MB/s" << std::endl;
+        } else {
+            std::cout << "\n=== Statistics ===" << std::endl;
+            std::cout << "Total files: " << total_files.load() << std::endl;
+            std::cout << "Processed files: " << processed_files.load() << std::endl;
+            std::cout << "Total bytes: " << total_bytes.load() << std::endl;
+            std::cout << "Copied bytes: " << copied_bytes.load() << std::endl;
+            std::cout << "Time elapsed: " << seconds << " seconds" << std::endl;
+            std::cout << "Speed: " << speed << " MB/s" << std::endl;
+        }
     }
 };
 
 void print_usage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [OPTIONS] <source>... <destination>" << std::endl;
-    std::cout << "\nOptions:" << std::endl;
-    std::cout << "  -t, --threads <num>   Number of threads (default: " << DEFAULT_THREADS << ")" << std::endl;
-    std::cout << "  -m, --move            Move files instead of copying" << std::endl;
-    std::cout << "  -v, --verbose         Enable verbose output" << std::endl;
-    std::cout << "  -o, --overwrite       Overwrite existing files" << std::endl;
-    std::cout << "  -s, --skip            Skip existing files" << std::endl;
-    std::cout << "  -V, --version         Print version information" << std::endl;
-    std::cout << "  -h, --help            Show this help message" << std::endl;
+    if (use_chinese) {
+        std::cout << "用法: " << program_name << " [选项] <源路径>... <目标路径>" << std::endl;
+        std::cout << "\n选项:" << std::endl;
+        std::cout << "  -t, --threads <数量>   线程数 (默认: " << DEFAULT_THREADS << ")" << std::endl;
+        std::cout << "  -m, --move            移动文件而非复制" << std::endl;
+        std::cout << "  -v, --verbose         启用详细输出" << std::endl;
+        std::cout << "  -o, --overwrite       覆盖已存在的文件" << std::endl;
+        std::cout << "  -s, --skip            跳过已存在的文件" << std::endl;
+        std::cout << "  --zh                  使用中文界面" << std::endl;
+        std::cout << "  -V, --version         显示版本信息" << std::endl;
+        std::cout << "  -h, --help            显示此帮助信息" << std::endl;
+    } else {
+        std::cout << "Usage: " << program_name << " [OPTIONS] <source>... <destination>" << std::endl;
+        std::cout << "\nOptions:" << std::endl;
+        std::cout << "  -t, --threads <num>   Number of threads (default: " << DEFAULT_THREADS << ")" << std::endl;
+        std::cout << "  -m, --move            Move files instead of copying" << std::endl;
+        std::cout << "  -v, --verbose         Enable verbose output" << std::endl;
+        std::cout << "  -o, --overwrite       Overwrite existing files" << std::endl;
+        std::cout << "  -s, --skip            Skip existing files" << std::endl;
+        std::cout << "  --zh                  Use Chinese interface" << std::endl;
+        std::cout << "  -V, --version         Print version information" << std::endl;
+        std::cout << "  -h, --help            Show this help message" << std::endl;
+    }
 }
 
 void print_version() {
@@ -638,6 +711,8 @@ int main(int argc, char* argv[]) {
             conflict_resolution = ConflictResolution::OVERWRITE;
         } else if (arg == "-s" || arg == "--skip") {
             conflict_resolution = ConflictResolution::SKIP;
+        } else if (arg == "--zh") {
+            use_chinese = true;
         } else if (arg == "-V" || arg == "--version") {
             print_version();
             return 0;
@@ -659,31 +734,61 @@ int main(int argc, char* argv[]) {
 
     for (const auto& src : src_paths) {
         if (!fs::exists(src)) {
-            std::cerr << "Error: Source path does not exist: " << src << std::endl;
+            if (use_chinese) {
+                std::cerr << "错误: 源路径不存在: " << src << std::endl;
+            } else {
+                std::cerr << "Error: Source path does not exist: " << src << std::endl;
+            }
             return 1;
         }
     }
 
     try {
-        std::cout << "Starting " << (move_mode ? "move" : "copy") << " operation..." << std::endl;
-        std::cout << "Source(s): ";
+        if (use_chinese) {
+            std::cout << "开始" << (move_mode ? "移动" : "复制") << "操作..." << std::endl;
+        } else {
+            std::cout << "Starting " << (move_mode ? "move" : "copy") << " operation..." << std::endl;
+        }
+        if (use_chinese) {
+            std::cout << "源路径: ";
+        } else {
+            std::cout << "Source(s): ";
+        }
         for (size_t i = 0; i < src_paths.size(); ++i) {
             if (i > 0) std::cout << ", ";
             std::cout << src_paths[i];
         }
         std::cout << std::endl;
-        std::cout << "Destination: " << dst_path << std::endl;
-        std::cout << "Threads: " << num_threads << std::endl;
-        std::cout << "Conflict resolution: ";
+        if (use_chinese) {
+            std::cout << "目标路径: " << dst_path << std::endl;
+            std::cout << "线程数: " << num_threads << std::endl;
+            std::cout << "冲突处理方式: ";
+        } else {
+            std::cout << "Destination: " << dst_path << std::endl;
+            std::cout << "Threads: " << num_threads << std::endl;
+            std::cout << "Conflict resolution: ";
+        }
         switch (conflict_resolution) {
             case ConflictResolution::OVERWRITE:
-                std::cout << "overwrite" << std::endl;
+                if (use_chinese) {
+                    std::cout << "覆盖" << std::endl;
+                } else {
+                    std::cout << "overwrite" << std::endl;
+                }
                 break;
             case ConflictResolution::SKIP:
-                std::cout << "skip" << std::endl;
+                if (use_chinese) {
+                    std::cout << "跳过" << std::endl;
+                } else {
+                    std::cout << "skip" << std::endl;
+                }
                 break;
             case ConflictResolution::ERROR:
-                std::cout << "error on conflict" << std::endl;
+                if (use_chinese) {
+                    std::cout << "冲突时报错" << std::endl;
+                } else {
+                    std::cout << "error on conflict" << std::endl;
+                }
                 break;
         }
 
@@ -696,9 +801,17 @@ int main(int argc, char* argv[]) {
 
         copier.process(sources, dst_path);
 
-        std::cout << "\nOperation completed successfully!" << std::endl;
+        if (use_chinese) {
+            std::cout << "\n操作成功完成!" << std::endl;
+        } else {
+            std::cout << "\nOperation completed successfully!" << std::endl;
+        }
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        if (use_chinese) {
+            std::cerr << "错误: " << e.what() << std::endl;
+        } else {
+            std::cerr << "Error: " << e.what() << std::endl;
+        }
         return 1;
     }
 
