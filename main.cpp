@@ -495,11 +495,11 @@ private:
         std::cout << "\r[";
         for (int i = 0; i < bar_width; ++i) {
             if (i < filled) {
-                std::cout << "=";
+                std::cout << "█";
             } else if (i == filled) {
-                std::cout << ">";
+                std::cout << "▓";
             } else {
-                std::cout << " ";
+                std::cout << "░";
             }
         }
         std::cout << "] ";
