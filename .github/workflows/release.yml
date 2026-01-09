@@ -23,7 +23,7 @@ jobs:
       - name: Install musl
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-dev musl-tools g++-multilib dpkg-dev
+          sudo apt-get install -y musl-dev musl-tools g++-multilib dpkg-dev liburing-dev
           echo "=== Finding C++ include path ==="
           find /usr/include -name "iostream" 2>/dev/null | head -10
           echo "=== GCC include paths ==="
