@@ -19,6 +19,8 @@
 #include <cerrno>
 #include <dirent.h>
 #include <unordered_set>
+#include <liburing.h>
+#include <memory>
 
 namespace fs = std::filesystem;
 
@@ -147,6 +149,174 @@ public:
     size_t size() const { return length; }
 };
 
+class AsyncIO {
+    struct io_uring ring;
+    size_t queue_depth;
+    std::vector<std::unique_ptr<char[]>> buffers;
+    static constexpr size_t BUFFER_SIZE = 64 * 1024;
+    static constexpr size_t BUFFER_COUNT = 128;
+
+public:
+    AsyncIO(size_t depth = 256) : queue_depth(depth) {
+        if (io_uring_queue_init(queue_depth, &ring, 0) < 0) {
+            throw std::runtime_error("Failed to initialize io_uring");
+        }
+
+        buffers.reserve(BUFFER_COUNT);
+        for (size_t i = 0; i < BUFFER_COUNT; ++i) {
+            buffers.push_back(std::make_unique<char[]>(BUFFER_SIZE));
+        }
+    }
+
+    ~AsyncIO() {
+        io_uring_queue_exit(&ring);
+    }
+
+    AsyncIO(const AsyncIO&) = delete;
+    AsyncIO& operator=(const AsyncIO&) = delete;
+
+    AsyncIO(AsyncIO&& other) noexcept {
+        ring = other.ring;
+        queue_depth = other.queue_depth;
+        buffers = std::move(other.buffers);
+        other.queue_depth = 0;
+    }
+
+    AsyncIO& operator=(AsyncIO&& other) noexcept {
+        if (this != &other) {
+            io_uring_queue_exit(&ring);
+            ring = other.ring;
+            queue_depth = other.queue_depth;
+            buffers = std::move(other.buffers);
+            other.queue_depth = 0;
+        }
+        return *this;
+    }
+
+    struct AsyncCopyContext {
+        int src_fd;
+        int dst_fd;
+        uint64_t offset;
+        uint64_t total_size;
+        uint64_t copied;
+        std::function<void(uint64_t)> progress_callback;
+        std::function<void()> completion_callback;
+        std::function<void(const std::string&)> error_callback;
+        char* buffer;
+        size_t buffer_size;
+        bool is_reading;
+    };
+
+    void async_copy(int src_fd, int dst_fd, uint64_t file_size,
+                    std::function<void(uint64_t)> progress_cb,
+                    std::function<void()> completion_cb,
+                    std::function<void(const std::string&)> error_cb) {
+        auto ctx = std::make_unique<AsyncCopyContext>();
+        ctx->src_fd = src_fd;
+        ctx->dst_fd = dst_fd;
+        ctx->offset = 0;
+        ctx->total_size = file_size;
+        ctx->copied = 0;
+        ctx->progress_callback = std::move(progress_cb);
+        ctx->completion_callback = std::move(completion_cb);
+        ctx->error_callback = std::move(error_cb);
+        ctx->buffer = buffers[0].get();
+        ctx->buffer_size = BUFFER_SIZE;
+        ctx->is_reading = true;
+
+        submit_read(std::move(ctx));
+    }
+
+    void process_events() {
+        struct io_uring_cqe* cqe;
+        unsigned head;
+        unsigned count = 0;
+
+        io_uring_for_each_cqe(&ring, head, cqe) {
+            count++;
+            auto* ctx = reinterpret_cast<AsyncCopyContext*>(io_uring_cqe_get_data(cqe));
+            
+            if (cqe->res < 0) {
+                if (ctx && ctx->error_callback) {
+                    ctx->error_callback("Async I/O operation failed: " + std::string(strerror(-cqe->res)));
+                }
+                delete ctx;
+            } else {
+                if (ctx) {
+                    handle_completion(ctx, cqe->res);
+                }
+            }
+        }
+
+        if (count > 0) {
+            io_uring_cq_advance(&ring, count);
+        }
+    }
+
+private:
+    void submit_read(std::unique_ptr<AsyncCopyContext> ctx) {
+        struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
+        if (!sqe) {
+            ctx->error_callback("Failed to get submission queue entry");
+            return;
+        }
+
+        size_t read_size = std::min(ctx->buffer_size, static_cast<size_t>(ctx->total_size - ctx->offset));
+        io_uring_prep_read(sqe, ctx->src_fd, ctx->buffer, read_size, ctx->offset);
+        io_uring_sqe_set_data(sqe, ctx.release());
+        io_uring_submit(&ring);
+    }
+
+    void submit_write(std::unique_ptr<AsyncCopyContext> ctx, size_t bytes_to_write) {
+        struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
+        if (!sqe) {
+            ctx->error_callback("Failed to get submission queue entry");
+            return;
+        }
+
+        io_uring_prep_write(sqe, ctx->dst_fd, ctx->buffer, bytes_to_write, ctx->offset);
+        io_uring_sqe_set_data(sqe, ctx.release());
+        io_uring_submit(&ring);
+    }
+
+    void handle_completion(AsyncCopyContext* ctx, ssize_t bytes_processed) {
+        if (ctx->is_reading) {
+            ctx->copied += bytes_processed;
+            
+            if (bytes_processed == 0 || ctx->copied >= ctx->total_size) {
+                if (ctx->progress_callback) {
+                    ctx->progress_callback(ctx->copied);
+                }
+                if (ctx->completion_callback) {
+                    ctx->completion_callback();
+                }
+                delete ctx;
+                return;
+            }
+
+            ctx->is_reading = false;
+            submit_write(std::unique_ptr<AsyncCopyContext>(ctx), bytes_processed);
+        } else {
+            ctx->offset += bytes_processed;
+            
+            if (ctx->progress_callback) {
+                ctx->progress_callback(ctx->copied);
+            }
+
+            if (ctx->copied >= ctx->total_size) {
+                if (ctx->completion_callback) {
+                    ctx->completion_callback();
+                }
+                delete ctx;
+                return;
+            }
+
+            ctx->is_reading = true;
+            submit_read(std::unique_ptr<AsyncCopyContext>(ctx));
+        }
+    }
+};
+
 class ThreadPool {
 public:
     ThreadPool(size_t num_threads, std::atomic<size_t>* processed_files_ptr, 
@@ -154,7 +324,8 @@ public:
                bool verbose, std::unordered_set<fs::path>* created_dirs_ptr)
         : stop(false), processed_files_ptr(processed_files_ptr), 
           copied_bytes_ptr(copied_bytes_ptr), conflict_resolution(conflict_resolution), 
-          verbose(verbose), created_dirs_ptr(created_dirs_ptr) {
+          verbose(verbose), created_dirs_ptr(created_dirs_ptr),
+          async_io(256) {
         workers.reserve(num_threads);
         for (size_t i = 0; i < num_threads; ++i) {
             workers.emplace_back([this] {
@@ -174,6 +345,13 @@ public:
                 }
             });
         }
+
+        event_processor = std::thread([this] {
+            while (!stop) {
+                async_io.process_events();
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+            }
+        });
     }
 
     ~ThreadPool() {
@@ -184,6 +362,8 @@ public:
         condition.notify_all();
         for (std::thread &worker : workers)
             worker.join();
+        if (event_processor.joinable())
+            event_processor.join();
     }
 
     void enqueue(FileTask task) {
@@ -205,6 +385,8 @@ private:
     ConflictResolution conflict_resolution;
     bool verbose;
     std::unordered_set<fs::path>* created_dirs_ptr;
+    std::thread event_processor;
+    AsyncIO async_io;
 
     [[nodiscard]] static size_t calculate_chunk_size(uint64_t file_size) {
         if (file_size < SMALL_FILE_THRESHOLD) {
@@ -276,7 +458,7 @@ private:
         }
     }
 
-    static void copy_file(const fs::path& src, const fs::path& dst, std::unordered_set<fs::path>& created_dirs) {
+    void copy_file(const fs::path& src, const fs::path& dst, std::unordered_set<fs::path>& created_dirs) {
         FileDescriptor src_fd(src.c_str(), O_RDONLY);
         
         struct stat src_stat;
@@ -310,20 +492,8 @@ private:
             }
         }
 
-        off_t offset = 0;
-        size_t remaining = src_stat.st_size;
-
-        while (remaining > 0) {
-            size_t chunk_size = calculate_chunk_size(remaining);
-            ssize_t sent = sendfile(dst_fd.get(), src_fd.get(), &offset, chunk_size);
-            
-            if (sent == -1) {
-                throw std::runtime_error(std::string("Failed to sendfile: ") + src.string() + " -> " + dst.string() +
-                                       " (errno: " + std::to_string(errno) + 
-                                       " - " + strerror(errno) + ")");
-            }
-
-            remaining -= sent;
+        if (src_stat.st_size > 0) {
+            copy_file_async(src_fd.get(), dst_fd.get(), src_stat.st_size);
         }
 
         struct timespec times[2];
@@ -332,7 +502,37 @@ private:
         utimensat(AT_FDCWD, dst.c_str(), times, 0);
     }
 
-    static void move_file(const fs::path& src, const fs::path& dst, std::unordered_set<fs::path>& created_dirs) {
+    void copy_file_async(int src_fd, int dst_fd, uint64_t file_size) {
+        std::atomic<bool> completed{false};
+        std::atomic<uint64_t> copied{0};
+        std::atomic<bool> has_error{false};
+        std::string error_msg;
+
+        auto progress_cb = [&copied](uint64_t bytes_copied) {
+            copied.store(bytes_copied);
+        };
+
+        auto completion_cb = [&completed]() {
+            completed.store(true);
+        };
+
+        auto error_cb = [&has_error, &error_msg](const std::string& msg) {
+            has_error.store(true);
+            error_msg = msg;
+        };
+
+        async_io.async_copy(src_fd, dst_fd, file_size, progress_cb, completion_cb, error_cb);
+
+        while (!completed.load() && !has_error.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        if (has_error.load()) {
+            throw std::runtime_error(error_msg);
+        }
+    }
+
+    void move_file(const fs::path& src, const fs::path& dst, std::unordered_set<fs::path>& created_dirs) {
         fs::path dst_parent = dst.parent_path();
         if (!dst_parent.empty()) {
             if (created_dirs.find(dst_parent) == created_dirs.end()) {
