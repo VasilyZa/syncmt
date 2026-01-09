@@ -77,7 +77,9 @@ jobs:
             -DVERSION="\"${VERSION}\"" \
             -DGIT_COMMIT="\"${COMMIT}\"" \
             -DBUILD_DATE="\"${BUILD_DATE}\"" \
-            -static -O2 -std=c++20 \
+            -static -O3 -std=c++20 \
+            -Wall -Wextra \
+            -luring \
             --target=x86_64-linux-musl \
             main.cpp -o ${BINARY_NAME}
           ls -lh ${BINARY_NAME}
