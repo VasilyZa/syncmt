@@ -21,6 +21,7 @@
 #include <unordered_set>
 #include <liburing.h>
 #include <memory>
+#include <functional>
 
 namespace fs = std::filesystem;
 
