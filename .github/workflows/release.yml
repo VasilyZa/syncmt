@@ -25,8 +25,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-dev musl-tools g++-multilib dpkg-dev liburing-dev
           echo "=== Finding liburing static library ==="
-          find /usr -name "liburing.a" 2>/dev/null
-          find /usr -name "liburing.so*" 2>/dev/null
+          ls -la /usr/lib/x86_64-linux-gnu/liburing.a 2>/dev/null || echo "liburing.a not found in /usr/lib/x86_64-linux-gnu/"
+          ls -la /usr/lib/liburing.a 2>/dev/null || echo "liburing.a not found in /usr/lib/"
           echo "=== Finding C++ include path ==="
           find /usr/include -name "iostream" 2>/dev/null | head -10
           echo "=== GCC include paths ==="
@@ -75,8 +75,8 @@ jobs:
           echo "Binary name: ${BINARY_NAME}"
           echo "=== Compiler Info ==="
           ${{ github.workspace }}/clang/bin/clang++ --version
-          echo "=== Finding liburing libraries ==="
-          find /usr -name "liburing.a" 2>/dev/null
+          echo "=== Checking liburing library ==="
+          ls -la /usr/lib/x86_64-linux-gnu/liburing.a 2>/dev/null || ls -la /usr/lib/liburing.a 2>/dev/null || echo "liburing.a not found"
           echo "=== Building ==="
           ${{ github.workspace }}/clang/bin/clang++ \
             -DVERSION="\"${VERSION}\"" \
