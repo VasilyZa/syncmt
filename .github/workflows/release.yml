@@ -90,7 +90,8 @@ jobs:
             -Wl,--whole-archive /usr/lib/x86_64-linux-gnu/liburing.a -Wl,--no-whole-archive \
             -lpthread \
             --target=x86_64-linux-musl \
-            main.cpp -o ${BINARY_NAME}
+            main.cpp file_utils.cpp async_io.cpp thread_pool.cpp file_copier.cpp \
+            -o ${BINARY_NAME}
           ls -lh ${BINARY_NAME}
           file ${BINARY_NAME}
           
