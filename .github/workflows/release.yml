@@ -20,40 +20,23 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Install musl
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-dev musl-tools g++-multilib dpkg-dev liburing-dev
           echo "=== Finding liburing static library ==="
-          ls -la /usr/lib/x86_64-linux-gnu/liburing.a 2>/dev/null || echo "liburing.a not found in /usr/lib/x86_64-linux-gnu/"
-          ls -la /usr/lib/liburing.a 2>/dev/null || echo "liburing.a not found in /usr/lib/"
-          echo "=== Finding C++ include path ==="
-          find /usr/include -name "iostream" 2>/dev/null | head -10
-          echo "=== GCC include paths ==="
-          g++ -E -x c++ -v - < /dev/null 2>&1 | grep -A 20 "include.*search"
+          ls -la /usr/lib/x86_64-linux-gnu/liburing.a 2>/dev/null || ls -la /usr/lib/liburing.a 2>/dev/null || echo "liburing.a not found in /usr/lib/"
+          echo "=== GCC Version ==="
+          gcc --version
       
-      - name: Download and install Clang 22
+      - name: Download Zig
         run: |
-          sudo apt-get install -y aria2
-          mkdir -p clang
-          cd clang
-          aria2c -s16 -x16 --log-level=error https://github.com/ZyCromerZ/Clang/releases/download/22.0.0git-20250928-release/Clang-22.0.0git-20250928.tar.gz
-          tar xf Clang-22.0.0git-20250928.tar.gz
-          echo "=== Directory Structure ==="
-          ls -la
-          echo "=== Bin directory contents ==="
-          ls -la bin/
-          echo "=== Finding clang++ binary ==="
-          find . -name "clang++" -type f
-          echo "=== Clang Directory Structure ==="
-          find . -type d -name "include" | head -20
-          echo "CLANG_DIR=$(pwd)" >> $GITHUB_ENV
-          echo "$(pwd)/bin" >> $GITHUB_PATH
-          echo "=== PATH ==="
-          echo $PATH
-          echo "=== Clang Version ==="
-          clang++ --version
-          echo "Clang 22 installed successfully"
+          aria2c -q -s16 -x16 `https://ziglang.org/builds/zig-x86_64-linux-0.16.0-dev.2040+c475f1fcd.tar.xz`
+          tar xf zig-x86_64-linux-0.16.0-dev.2040+c475f1fcd.tar.xz
+          mv zig-x86_64-linux-0.16.0-dev.2040+c475f1fcd zig
+          echo "$(pwd)/zig" >> $GITHUB_PATH
+          echo "=== Zig Version ==="
+          zig version
       
       - name: Get commit hash
         id: commit
@@ -62,7 +45,7 @@ jobs:
           echo "hash=${COMMIT_HASH}" >> $GITHUB_OUTPUT
           echo "Commit hash: ${COMMIT_HASH}"
       
-      - name: Build with musl-static
+      - name: Build with musl-static using Zig
         run: |
           VERSION="${{ inputs.version }}"
           COMMIT="${{ steps.commit.outputs.hash }}"
@@ -73,26 +56,20 @@ jobs:
           echo "Git commit: ${COMMIT}"
           echo "Build date: ${BUILD_DATE}"
           echo "Binary name: ${BINARY_NAME}"
-          echo "=== Compiler Info ==="
-          ${{ github.workspace }}/clang/bin/clang++ --version
-          echo "=== Checking liburing library ==="
-          ls -la /usr/lib/x86_64-linux-gnu/liburing.a 2>/dev/null || ls -la /usr/lib/liburing.a 2>/dev/null || echo "liburing.a not found"
-          echo "=== Building with SIMD optimizations ==="
-          ${{ github.workspace }}/clang/bin/clang++ \
-            -DVERSION="\"${VERSION}\"" \
-            -DGIT_COMMIT="\"${COMMIT}\"" \
-            -DBUILD_DATE="\"${BUILD_DATE}\"" \
-            -static -O3 -std=c++17 \
-            -march=native -mtune=native -flto \
+          echo "=== Building with Zig for musl-static ==="
+          zig c++ -target x86_64-linux-musl -static -O3 -std=c++17 \
+            -march=native \
             -mavx2 -msse4.2 -mpopcnt \
             -Wall -Wextra \
             -Wno-unused-variable \
             -Wno-sign-compare \
             -Wno-unused-private-field \
             -Iinclude \
-            -Wl,--whole-archive /usr/lib/x86_64-linux-gnu/liburing.a -Wl,--no-whole-archive \
+            /usr/lib/x86_64-linux-gnu/liburing.a \
             -lpthread \
-            --target=x86_64-linux-musl \
+            -DVERSION="\"${VERSION}\"" \
+            -DGIT_COMMIT="\"${COMMIT}\"" \
+            -DBUILD_DATE="\"${BUILD_DATE}\"" \
             main.cpp src/file_utils.cpp src/async_io.cpp src/thread_pool.cpp src/file_copier.cpp src/memory_pool.cpp \
             -o ${BINARY_NAME}
           ls -lh ${BINARY_NAME}
@@ -207,7 +184,7 @@ jobs:
           echo "### Build Information" >> release_notes.txt
           echo "- **Version**: ${{ env.VERSION }}" >> release_notes.txt
           echo "- **Commit**: ${{ env.COMMIT }}" >> release_notes.txt
-          echo "- **Compiler**: Clang 22 with musl-static" >> release_notes.txt
+          echo "- **Compiler**: GCC with musl-static" >> release_notes.txt
           echo "- **Platform**: Linux x86_64" >> release_notes.txt
           echo "- **Build Date**: $(TZ='Asia/Shanghai' date +\"%Y-%m-%d %H:%M:%S UTC+8\")" >> release_notes.txt
           echo "" >> release_notes.txt
