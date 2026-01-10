@@ -7,6 +7,7 @@
 #include <immintrin.h>
 #include <atomic>
 #include <mutex>
+#include <cpuid.h>
 
 class MemoryPool {
 public:
@@ -37,7 +38,7 @@ private:
     std::mutex mutex_;
 };
 
-inline void* operator new(size_t size, MemoryPool& pool) {
+inline void* operator new(size_t, MemoryPool& pool) {
     return pool.allocate();
 }
 
@@ -124,11 +125,13 @@ inline void memcpy_nt(void* dst, const void* src, size_t size) {
 }
 
 inline bool has_avx2() {
-    int regs[4];
-    __cpuid(regs, 0);
-    if (regs[0] < 7) return false;
-    __cpuidex(regs, 7, 0);
-    return (regs[1] & (1 << 5)) != 0;
+    unsigned int eax, ebx, ecx, edx;
+    
+    __get_cpuid(0, &eax, &ebx, &ecx, &edx);
+    if (eax < 7) return false;
+    
+    __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx);
+    return (ebx & (1 << 5)) != 0;
 }
 
 inline void optimized_memcpy(void* dst, const void* src, size_t size) {

@@ -65,17 +65,22 @@ void AsyncIO::process_events() {
         auto* ctx_raw = reinterpret_cast<AsyncCopyContext*>(io_uring_cqe_get_data(cqe));
         
         if (cqe->res < 0) {
-            auto ctx = std::shared_ptr<AsyncCopyContext>(ctx_raw, [](AsyncCopyContext*) {});
-            if (ctx && ctx->error_callback) {
-                ctx->error_callback("Async I/O operation failed: " + std::string(strerror(-cqe->res)));
+            if (ctx_raw && ctx_raw->error_callback) {
+                ctx_raw->error_callback("Async I/O operation failed: " + std::string(strerror(-cqe->res)));
             }
-            if (ctx && ctx->buffer && ctx->pool) {
-                ctx->pool->deallocate(ctx->buffer);
+            if (ctx_raw && ctx_raw->buffer && ctx_raw->pool) {
+                ctx_raw->pool->deallocate(ctx_raw->buffer);
+                ctx_raw->buffer = nullptr;
+            }
+            if (ctx_raw) {
+                ctx_raw->self.reset();
             }
         } else {
-            auto ctx = std::shared_ptr<AsyncCopyContext>(ctx_raw, [](AsyncCopyContext*) {});
-            if (ctx) {
-                handle_completion(ctx, cqe->res);
+            if (ctx_raw) {
+                auto ctx = ctx_raw->self.lock();
+                if (ctx) {
+                    handle_completion(ctx, cqe->res);
+                }
             }
         }
     }
@@ -96,11 +101,9 @@ void AsyncIO::submit_read(std::shared_ptr<AsyncCopyContext> ctx) {
     io_uring_prep_read(sqe, ctx->src_fd, ctx->buffer, read_size, ctx->offset);
     
     auto* ctx_raw = ctx.get();
-    ctx_raw->ref_count = new std::atomic<int>(1);
+    ctx_raw->self = ctx;
     
     io_uring_sqe_set_data(sqe, ctx_raw);
-    
-    ctx->keep_alive = ctx;
     io_uring_submit(&ring);
 }
 
@@ -114,9 +117,9 @@ void AsyncIO::submit_write(std::shared_ptr<AsyncCopyContext> ctx, size_t bytes_t
     io_uring_prep_write(sqe, ctx->dst_fd, ctx->buffer, bytes_to_write, ctx->offset);
     
     auto* ctx_raw = ctx.get();
-    io_uring_sqe_set_data(sqe, ctx_raw);
+    ctx_raw->self = ctx;
     
-    ctx->keep_alive = ctx;
+    io_uring_sqe_set_data(sqe, ctx_raw);
     io_uring_submit(&ring);
 }
 
