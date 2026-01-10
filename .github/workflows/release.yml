@@ -26,6 +26,8 @@ jobs:
           sudo apt-get install -y musl-dev musl-tools g++-multilib dpkg-dev liburing-dev
           echo "=== Finding liburing static library ==="
           ls -la /usr/lib/x86_64-linux-gnu/liburing.a 2>/dev/null || ls -la /usr/lib/liburing.a 2>/dev/null || echo "liburing.a not found in /usr/lib/"
+          echo "=== Finding liburing headers ==="
+          ls -la /usr/include/liburing.h 2>/dev/null || echo "liburing.h not found in /usr/include/"
           echo "=== GCC Version ==="
           gcc --version
       
@@ -60,11 +62,8 @@ jobs:
           ${ZIG_PATH}/zig c++ -target x86_64-linux-musl -static -O3 -std=c++17 \
             -march=native \
             -mavx2 -msse4.2 -mpopcnt \
-            -Wall -Wextra \
-            -Wno-unused-variable \
-            -Wno-sign-compare \
-            -Wno-unused-private-field \
-            -Iinclude \
+            -Wno-everything \
+            -isystem /usr/include \
             /usr/lib/x86_64-linux-gnu/liburing.a \
             -lpthread \
             -DVERSION="\"${VERSION}\"" \
