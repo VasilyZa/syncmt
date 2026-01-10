@@ -60,7 +60,7 @@ jobs:
           echo "Binary name: ${BINARY_NAME}"
           echo "=== Building with Zig for musl-static ==="
           ${ZIG_PATH}/zig c++ -target x86_64-linux-musl -static -O3 -std=c++17 \
-            --summary none \
+            -Wno-everything \
             -march=native \
             -mavx2 -msse4.2 -mpopcnt \
             -Iinclude \
