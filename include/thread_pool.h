@@ -3,6 +3,7 @@
 #include "config.h"
 #include "file_utils.h"
 #include "async_io.h"
+#include "memory_pool.h"
 #include <vector>
 #include <thread>
 #include <mutex>
@@ -11,6 +12,7 @@
 #include <condition_variable>
 #include <unordered_set>
 #include <functional>
+#include <memory>
 
 class ThreadPool {
 public:
@@ -25,6 +27,7 @@ private:
     void process_task(const FileTask& task);
     void copy_file(const fs::path& src, const fs::path& dst, std::unordered_set<fs::path>& created_dirs);
     void copy_file_async(int src_fd, int dst_fd, uint64_t file_size);
+    void copy_file_simd(int src_fd, int dst_fd, uint64_t file_size);
     void move_file(const fs::path& src, const fs::path& dst, std::unordered_set<fs::path>& created_dirs);
 
     static size_t calculate_chunk_size(uint64_t file_size);
@@ -41,5 +44,6 @@ private:
     std::unordered_set<fs::path>* created_dirs_ptr;
     std::thread event_processor;
     AsyncIO async_io;
+    std::unique_ptr<MemoryPool> memory_pool;
     static std::mutex cout_mutex;
 };

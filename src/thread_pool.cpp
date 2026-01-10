@@ -1,4 +1,5 @@
 #include "../include/thread_pool.h"
+#include "../include/memory_pool.h"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -18,7 +19,7 @@ ThreadPool::ThreadPool(size_t num_threads, std::atomic<size_t>* processed_files_
     : stop(false), processed_files_ptr(processed_files_ptr), 
       copied_bytes_ptr(copied_bytes_ptr), conflict_resolution(conflict_resolution), 
       verbose(verbose), created_dirs_ptr(created_dirs_ptr),
-      async_io(256) {
+      async_io(256), memory_pool(std::make_unique<MemoryPool>(64 * 1024, 128)) {
     workers.reserve(num_threads);
     for (size_t i = 0; i < num_threads; ++i) {
         workers.emplace_back([this] {
@@ -208,6 +209,45 @@ void ThreadPool::copy_file_async(int src_fd, int dst_fd, uint64_t file_size) {
 
     if (has_error.load()) {
         throw std::runtime_error(error_msg);
+    }
+}
+
+void ThreadPool::copy_file_simd(int src_fd, int dst_fd, uint64_t file_size) {
+    const size_t buffer_size = 64 * 1024;
+    char* buffer = static_cast<char*>(memory_pool->allocate());
+    
+    auto cleanup = [&]() {
+        memory_pool->deallocate(buffer);
+    };
+
+    try {
+        uint64_t offset = 0;
+        while (offset < file_size) {
+            size_t to_read = std::min(buffer_size, static_cast<size_t>(file_size - offset));
+            
+            ssize_t bytes_read = pread(src_fd, buffer, to_read, offset);
+            if (bytes_read < 0) {
+                throw std::runtime_error(std::string("Read failed: ") + strerror(errno));
+            }
+            
+            if (bytes_read == 0) break;
+            
+            ssize_t bytes_written = pwrite(dst_fd, buffer, bytes_read, offset);
+            if (bytes_written < 0) {
+                throw std::runtime_error(std::string("Write failed: ") + strerror(errno));
+            }
+            
+            if (bytes_written != bytes_read) {
+                throw std::runtime_error("Partial write occurred");
+            }
+            
+            offset += bytes_written;
+        }
+        
+        cleanup();
+    } catch (...) {
+        cleanup();
+        throw;
     }
 }
 

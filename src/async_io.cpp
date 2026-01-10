@@ -1,4 +1,5 @@
 #include "../include/async_io.h"
+#include "../include/memory_pool.h"
 #include <stdexcept>
 #include <cstring>
 #include <unistd.h>
@@ -8,10 +9,7 @@ AsyncIO::AsyncIO(size_t depth) : queue_depth(depth) {
         throw std::runtime_error("Failed to initialize io_uring");
     }
 
-    buffers.reserve(BUFFER_COUNT);
-    for (size_t i = 0; i < BUFFER_COUNT; ++i) {
-        buffers.push_back(std::make_unique<char[]>(BUFFER_SIZE));
-    }
+    memory_pool = std::make_unique<MemoryPool>(BUFFER_SIZE, BUFFER_COUNT);
 }
 
 AsyncIO::~AsyncIO() {
@@ -21,7 +19,7 @@ AsyncIO::~AsyncIO() {
 AsyncIO::AsyncIO(AsyncIO&& other) noexcept {
     ring = other.ring;
     queue_depth = other.queue_depth;
-    buffers = std::move(other.buffers);
+    memory_pool = std::move(other.memory_pool);
     other.queue_depth = 0;
 }
 
@@ -30,7 +28,7 @@ AsyncIO& AsyncIO::operator=(AsyncIO&& other) noexcept {
         io_uring_queue_exit(&ring);
         ring = other.ring;
         queue_depth = other.queue_depth;
-        buffers = std::move(other.buffers);
+        memory_pool = std::move(other.memory_pool);
         other.queue_depth = 0;
     }
     return *this;
@@ -40,7 +38,7 @@ void AsyncIO::async_copy(int src_fd, int dst_fd, uint64_t file_size,
                         std::function<void(uint64_t)> progress_cb,
                         std::function<void()> completion_cb,
                         std::function<void(const std::string&)> error_cb) {
-    auto ctx = std::make_unique<AsyncCopyContext>();
+    auto ctx = std::make_shared<AsyncCopyContext>();
     ctx->src_fd = src_fd;
     ctx->dst_fd = dst_fd;
     ctx->offset = 0;
@@ -49,11 +47,12 @@ void AsyncIO::async_copy(int src_fd, int dst_fd, uint64_t file_size,
     ctx->progress_callback = std::move(progress_cb);
     ctx->completion_callback = std::move(completion_cb);
     ctx->error_callback = std::move(error_cb);
-    ctx->buffer = buffers[0].get();
+    ctx->buffer = static_cast<char*>(memory_pool->allocate());
     ctx->buffer_size = BUFFER_SIZE;
     ctx->is_reading = true;
+    ctx->pool = memory_pool.get();
 
-    submit_read(std::move(ctx));
+    submit_read(ctx);
 }
 
 void AsyncIO::process_events() {
@@ -63,14 +62,18 @@ void AsyncIO::process_events() {
 
     io_uring_for_each_cqe(&ring, head, cqe) {
         count++;
-        auto* ctx = reinterpret_cast<AsyncCopyContext*>(io_uring_cqe_get_data(cqe));
+        auto* ctx_raw = reinterpret_cast<AsyncCopyContext*>(io_uring_cqe_get_data(cqe));
         
         if (cqe->res < 0) {
+            auto ctx = std::shared_ptr<AsyncCopyContext>(ctx_raw, [](AsyncCopyContext*) {});
             if (ctx && ctx->error_callback) {
                 ctx->error_callback("Async I/O operation failed: " + std::string(strerror(-cqe->res)));
             }
-            delete ctx;
+            if (ctx && ctx->buffer && ctx->pool) {
+                ctx->pool->deallocate(ctx->buffer);
+            }
         } else {
+            auto ctx = std::shared_ptr<AsyncCopyContext>(ctx_raw, [](AsyncCopyContext*) {});
             if (ctx) {
                 handle_completion(ctx, cqe->res);
             }
@@ -82,7 +85,7 @@ void AsyncIO::process_events() {
     }
 }
 
-void AsyncIO::submit_read(std::unique_ptr<AsyncCopyContext> ctx) {
+void AsyncIO::submit_read(std::shared_ptr<AsyncCopyContext> ctx) {
     struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
     if (!sqe) {
         ctx->error_callback("Failed to get submission queue entry");
@@ -91,11 +94,17 @@ void AsyncIO::submit_read(std::unique_ptr<AsyncCopyContext> ctx) {
 
     size_t read_size = std::min(ctx->buffer_size, static_cast<size_t>(ctx->total_size - ctx->offset));
     io_uring_prep_read(sqe, ctx->src_fd, ctx->buffer, read_size, ctx->offset);
-    io_uring_sqe_set_data(sqe, ctx.release());
+    
+    auto* ctx_raw = ctx.get();
+    ctx_raw->ref_count = new std::atomic<int>(1);
+    
+    io_uring_sqe_set_data(sqe, ctx_raw);
+    
+    ctx->keep_alive = ctx;
     io_uring_submit(&ring);
 }
 
-void AsyncIO::submit_write(std::unique_ptr<AsyncCopyContext> ctx, size_t bytes_to_write) {
+void AsyncIO::submit_write(std::shared_ptr<AsyncCopyContext> ctx, size_t bytes_to_write) {
     struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
     if (!sqe) {
         ctx->error_callback("Failed to get submission queue entry");
@@ -103,11 +112,15 @@ void AsyncIO::submit_write(std::unique_ptr<AsyncCopyContext> ctx, size_t bytes_t
     }
 
     io_uring_prep_write(sqe, ctx->dst_fd, ctx->buffer, bytes_to_write, ctx->offset);
-    io_uring_sqe_set_data(sqe, ctx.release());
+    
+    auto* ctx_raw = ctx.get();
+    io_uring_sqe_set_data(sqe, ctx_raw);
+    
+    ctx->keep_alive = ctx;
     io_uring_submit(&ring);
 }
 
-void AsyncIO::handle_completion(AsyncCopyContext* ctx, ssize_t bytes_processed) {
+void AsyncIO::handle_completion(std::shared_ptr<AsyncCopyContext> ctx, ssize_t bytes_processed) {
     if (ctx->is_reading) {
         ctx->copied += bytes_processed;
         
@@ -118,12 +131,15 @@ void AsyncIO::handle_completion(AsyncCopyContext* ctx, ssize_t bytes_processed) 
             if (ctx->completion_callback) {
                 ctx->completion_callback();
             }
-            delete ctx;
+            if (ctx->buffer && ctx->pool) {
+                ctx->pool->deallocate(ctx->buffer);
+                ctx->buffer = nullptr;
+            }
             return;
         }
 
         ctx->is_reading = false;
-        submit_write(std::unique_ptr<AsyncCopyContext>(ctx), bytes_processed);
+        submit_write(ctx, bytes_processed);
     } else {
         ctx->offset += bytes_processed;
         
@@ -135,11 +151,14 @@ void AsyncIO::handle_completion(AsyncCopyContext* ctx, ssize_t bytes_processed) 
             if (ctx->completion_callback) {
                 ctx->completion_callback();
             }
-            delete ctx;
+            if (ctx->buffer && ctx->pool) {
+                ctx->pool->deallocate(ctx->buffer);
+                ctx->buffer = nullptr;
+            }
             return;
         }
 
         ctx->is_reading = true;
-        submit_read(std::unique_ptr<AsyncCopyContext>(ctx));
+        submit_read(ctx);
     }
 }

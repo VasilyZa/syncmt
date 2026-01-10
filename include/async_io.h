@@ -5,11 +5,12 @@
 #include <memory>
 #include <functional>
 #include <atomic>
+#include <memory_pool.h>
 
 class AsyncIO {
     struct io_uring ring;
     size_t queue_depth;
-    std::vector<std::unique_ptr<char[]>> buffers;
+    std::unique_ptr<MemoryPool> memory_pool;
     static constexpr size_t BUFFER_SIZE = 64 * 1024;
     static constexpr size_t BUFFER_COUNT = 128;
 
@@ -35,6 +36,8 @@ public:
         char* buffer;
         size_t buffer_size;
         bool is_reading;
+        MemoryPool* pool;
+        std::weak_ptr<AsyncCopyContext> self;
     };
 
     void async_copy(int src_fd, int dst_fd, uint64_t file_size,
@@ -45,7 +48,7 @@ public:
     void process_events();
 
 private:
-    void submit_read(std::unique_ptr<AsyncCopyContext> ctx);
-    void submit_write(std::unique_ptr<AsyncCopyContext> ctx, size_t bytes_to_write);
-    void handle_completion(AsyncCopyContext* ctx, ssize_t bytes_processed);
+    void submit_read(std::shared_ptr<AsyncCopyContext> ctx);
+    void submit_write(std::shared_ptr<AsyncCopyContext> ctx, size_t bytes_to_write);
+    void handle_completion(std::shared_ptr<AsyncCopyContext> ctx, ssize_t bytes_processed);
 };
