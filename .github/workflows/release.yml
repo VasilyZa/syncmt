@@ -61,7 +61,7 @@ jobs:
           echo "=== Building with Zig for musl-static ==="
           ${ZIG_PATH}/zig c++ -target x86_64-linux-musl -static -O3 -std=c++17 \
             -Wno-everything \
-            -march=native \
+            -march=haswell \
             -mavx2 -msse4.2 -mpopcnt \
             -Iinclude \
             -isystem /usr/include \
